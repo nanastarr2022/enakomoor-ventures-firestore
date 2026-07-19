@@ -1,0 +1,87 @@
+{
+  "users": [
+    {
+      "id": "user-1",
+      "name": "Kweku Boateng (Owner)",
+      "username": "admin",
+      "role": "ADMIN",
+      "branchId": "all",
+      "isActive": true,
+      "passwordHash": "admin123"
+    }
+  ],
+  "branches": [],
+  "shifts": [],
+  "transactions": [],
+  "commissions": [
+    {
+      "id": "comm-1",
+      "minAmount": 1,
+      "maxAmount": 100,
+      "commissionValue": 1
+    },
+    {
+      "id": "comm-2",
+      "minAmount": 101,
+      "maxAmount": 500,
+      "commissionValue": 5
+    },
+    {
+      "id": "comm-3",
+      "minAmount": 501,
+      "maxAmount": 1000,
+      "commissionValue": 10
+    },
+    {
+      "id": "comm-4",
+      "minAmount": 1001,
+      "maxAmount": 2000,
+      "commissionValue": 15
+    },
+    {
+      "id": "comm-5",
+      "minAmount": 2001,
+      "maxAmount": 9999999,
+      "commissionValue": 20
+    }
+  ],
+  "debts": [],
+  "floats": [],
+  "auditLogs": [
+    {
+      "id": "log-1784301318108-434",
+      "timestamp": "2026-07-17T15:15:18.108Z",
+      "userId": "user-1",
+      "userName": "Kweku Boateng (Owner)",
+      "action": "User Login",
+      "newValue": "Logged into System Base"
+    },
+    {
+      "timestamp": "2026-07-14T11:40:00.000Z",
+      "userId": "user-1",
+      "userName": "Kweku Boateng (Owner)",
+      "action": "Database Cleared",
+      "newValue": "System cleared for custom setup"
+    }
+  ],
+  "notifications": [],
+  "approvalSettings": {
+    "approvalThreshold": 5000,
+    "notificationRecipients": [
+      "enakomoorventures@gmail.com"
+    ],
+    "quietHoursEnabled": false,
+    "quietHoursStart": "22:00",
+    "quietHoursEnd": "06:00",
+    "escalationRulesEnabled": true,
+    "escalationTimeoutMinutes": 15,
+    "escalationRecipients": [
+      "backup-admin@enakomoorventures.com"
+    ],
+    "browserPushEnabled": true,
+    "fcmEnabled": true,
+    "emailEnabled": true,
+    "smsEnabled": false,
+    "whatsappEnabled": false
+  }
+}
