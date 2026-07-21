@@ -222,7 +222,7 @@ Automated transmission from MoMo Business Platform to enakomoorventures@gmail.co
   try {
     const { data, error } = await resend.emails.send({
       from: FROM_ADDRESS,
-      to: "enakomoorventures@gmail.com",
+      to: "nanastarr2022@gmail.com",
       subject,
       text: textContent,
       html: htmlContent,
