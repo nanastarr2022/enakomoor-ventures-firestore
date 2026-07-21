@@ -1,57 +1,26 @@
-import nodemailer from "nodemailer";
+import { Resend } from "resend";
 import { Transaction } from "../types";
 
 // Load environment variables if not already done
 import dotenv from "dotenv";
 dotenv.config();
 
+const resend = new Resend(process.env.RESEND_API_KEY);
+
+// Use Resend's default test sender until you verify your own domain in Resend.
+// Once you verify "enakomoorventures.com" (or similar) in Resend's dashboard,
+// change this to something like: "Security Alerts <alerts@enakomoorventures.com>"
+const FROM_ADDRESS = process.env.RESEND_FROM || "Security Alerts <onboarding@resend.dev>";
+
 /**
  * Automatically sends an email notification to the admins on enakomoorventures@gmail.com
  * when an operational transaction (deposit, withdrawal, send money, or airtime) exceeds 5,000 GHS.
  */
 export async function sendHighValueAlert(tx: Transaction, branchName: string): Promise<boolean> {
-  const host = process.env.SMTP_HOST || "smtp.gmail.com";
-  const port = Number(process.env.SMTP_PORT) || 465;
-  const secure = process.env.SMTP_SECURE === "true" || port === 465;
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
-
-  let activeUser = user;
-  let activePass = pass;
-  let activeHost = host;
-  let activePort = port;
-  let activeSecure = secure;
-
-  const isDemoMode = !user || !pass;
-
-  if (isDemoMode) {
-    console.log(
-      `ℹ️ SMTP credentials (SMTP_USER / SMTP_PASS) not configured in environment. ` +
-      `Automatically provisioning a temporary Ethereal test email account to generate an active reviewable email alert for GHS ${tx.amount}...`
-    );
-    try {
-      const testAccount = await nodemailer.createTestAccount();
-      activeHost = testAccount.smtp.host;
-      activePort = testAccount.smtp.port;
-      activeSecure = testAccount.smtp.secure;
-      activeUser = testAccount.user;
-      activePass = testAccount.pass;
-      console.log(`✅ Temporary test email credentials provisioned successfully: ${activeUser}`);
-    } catch (err) {
-      console.error("❌ Failed to create temporary test email account:", err);
-      return false;
-    }
+  if (!process.env.RESEND_API_KEY) {
+    console.log("ℹ️ RESEND_API_KEY not configured in environment. Skipping high-value alert email.");
+    return false;
   }
-
-  const transporter = nodemailer.createTransport({
-    host: activeHost,
-    port: activePort,
-    secure: activeSecure,
-    auth: {
-      user: activeUser,
-      pass: activePass,
-    },
-  });
 
   const formattedAmount = new Intl.NumberFormat("en-GH", {
     style: "currency",
@@ -170,7 +139,7 @@ export async function sendHighValueAlert(tx: Transaction, branchName: string): P
             <div class="amount-label">Transaction Value</div>
             <div class="amount-value">${formattedAmount}</div>
           </div>
-          
+
           <table class="detail-table">
             <tr>
               <th>Transaction ID</th>
@@ -251,18 +220,20 @@ Automated transmission from MoMo Business Platform to enakomoorventures@gmail.co
   `.trim();
 
   try {
-    const info = await transporter.sendMail({
-      from: `"${branchName} Security" <${activeUser}>`,
+    const { data, error } = await resend.emails.send({
+      from: FROM_ADDRESS,
       to: "enakomoorventures@gmail.com",
       subject,
       text: textContent,
       html: htmlContent,
     });
 
-    console.log(`✉️ High-value transaction alert email sent successfully to enakomoorventures@gmail.com. Message ID: ${info.messageId}`);
-    if (isDemoMode) {
-      console.log(`🔗 VIEW TEST EMAIL PREVIEW HERE: ${nodemailer.getTestMessageUrl(info)}`);
+    if (error) {
+      console.error(`❌ Failed to send high-value transaction alert email to enakomoorventures@gmail.com:`, error);
+      return false;
     }
+
+    console.log(`✉️ High-value transaction alert email sent successfully to enakomoorventures@gmail.com. Message ID: ${data?.id}`);
     return true;
   } catch (error: any) {
     console.error(`❌ Failed to send high-value transaction alert email to enakomoorventures@gmail.com:`, error);
@@ -275,7 +246,7 @@ Automated transmission from MoMo Business Platform to enakomoorventures@gmail.co
  */
 export function isQuietHours(settings: any): boolean {
   if (!settings.quietHoursEnabled) return false;
-  
+
   const now = new Date();
   const currentHour = now.getHours();
   const currentMinute = now.getMinutes();
@@ -371,45 +342,15 @@ export async function sendApprovalAlert(tx: Transaction, branchName: string, set
     return true;
   }
 
-  const host = process.env.SMTP_HOST || "smtp.gmail.com";
-  const port = Number(process.env.SMTP_PORT) || 465;
-  const secure = process.env.SMTP_SECURE === "true" || port === 465;
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
-
-  let activeUser = user;
-  let activePass = pass;
-  let activeHost = host;
-  let activePort = port;
-  let activeSecure = secure;
-
-  const isDemoMode = !user || !pass;
-
-  if (isDemoMode) {
-    try {
-      const testAccount = await nodemailer.createTestAccount();
-      activeHost = testAccount.smtp.host;
-      activePort = testAccount.smtp.port;
-      activeSecure = testAccount.smtp.secure;
-      activeUser = testAccount.user;
-      activePass = testAccount.pass;
-    } catch (err) {
-      console.error("❌ Failed to create temporary test email account:", err);
-      return false;
-    }
+  if (!process.env.RESEND_API_KEY) {
+    console.log("ℹ️ RESEND_API_KEY not configured in environment. Skipping approval alert email.");
+    return false;
   }
 
-  const transporter = nodemailer.createTransport({
-    host: activeHost,
-    port: activePort,
-    secure: activeSecure,
-    auth: { user: activeUser, pass: activePass }
-  });
-
   const subject = `⚠️ ACTION REQUIRED: Approve ${formattedAmount} transaction at ${branchName}`;
-  const recipients = settings.notificationRecipients && settings.notificationRecipients.length > 0 
-    ? settings.notificationRecipients.join(", ") 
-    : "enakomoorventures@gmail.com";
+  const recipients = settings.notificationRecipients && settings.notificationRecipients.length > 0
+    ? settings.notificationRecipients
+    : ["enakomoorventures@gmail.com"];
 
   const htmlContent = `
     <!DOCTYPE html>
@@ -448,16 +389,19 @@ export async function sendApprovalAlert(tx: Transaction, branchName: string, set
   `;
 
   try {
-    const info = await transporter.sendMail({
-      from: `"${branchName} Security" <${activeUser}>`,
+    const { data, error } = await resend.emails.send({
+      from: FROM_ADDRESS,
       to: recipients,
       subject,
-      html: htmlContent
+      html: htmlContent,
     });
-    console.log(`✉️ Approval request email dispatched successfully to ${recipients}. ID: ${info.messageId}`);
-    if (isDemoMode) {
-      console.log(`🔗 VIEW TEST EMAIL PREVIEW HERE: ${nodemailer.getTestMessageUrl(info)}`);
+
+    if (error) {
+      console.error("❌ Failed to send approval email alert:", error);
+      return false;
     }
+
+    console.log(`✉️ Approval request email dispatched successfully to ${recipients.join(", ")}. ID: ${data?.id}`);
     return true;
   } catch (err) {
     console.error("❌ Failed to send approval email alert:", err);
@@ -481,44 +425,15 @@ export async function sendEscalationAlert(tx: Transaction, branchName: string, s
     return true;
   }
 
-  const host = process.env.SMTP_HOST || "smtp.gmail.com";
-  const port = Number(process.env.SMTP_PORT) || 465;
-  const secure = process.env.SMTP_SECURE === "true" || port === 465;
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
-
-  let activeUser = user;
-  let activePass = pass;
-  let activeHost = host;
-  let activePort = port;
-  let activeSecure = secure;
-
-  const isDemoMode = !user || !pass;
-
-  if (isDemoMode) {
-    try {
-      const testAccount = await nodemailer.createTestAccount();
-      activeHost = testAccount.smtp.host;
-      activePort = testAccount.smtp.port;
-      activeSecure = testAccount.smtp.secure;
-      activeUser = testAccount.user;
-      activePass = testAccount.pass;
-    } catch (err) {
-      return false;
-    }
+  if (!process.env.RESEND_API_KEY) {
+    console.log("ℹ️ RESEND_API_KEY not configured in environment. Skipping escalation alert email.");
+    return false;
   }
 
-  const transporter = nodemailer.createTransport({
-    host: activeHost,
-    port: activePort,
-    secure: activeSecure,
-    auth: { user: activeUser, pass: activePass }
-  });
-
   const subject = `🚨 ESCALATION: Unresolved high-value transaction ${tx.id} at ${branchName}`;
-  const recipients = settings.escalationRecipients && settings.escalationRecipients.length > 0 
-    ? settings.escalationRecipients.join(", ") 
-    : "backup-admin@enakomoorventures.com";
+  const recipients = settings.escalationRecipients && settings.escalationRecipients.length > 0
+    ? settings.escalationRecipients
+    : ["backup-admin@enakomoorventures.com"];
 
   const htmlContent = `
     <!DOCTYPE html>
@@ -542,13 +457,19 @@ export async function sendEscalationAlert(tx: Transaction, branchName: string, s
   `;
 
   try {
-    const info = await transporter.sendMail({
-      from: `"${branchName} Escalations" <${activeUser}>`,
+    const { data, error } = await resend.emails.send({
+      from: FROM_ADDRESS,
       to: recipients,
       subject,
-      html: htmlContent
+      html: htmlContent,
     });
-    console.log(`✉️ Escalation email sent to backup admins (${recipients}). ID: ${info.messageId}`);
+
+    if (error) {
+      console.error("❌ Failed to send escalation email:", error);
+      return false;
+    }
+
+    console.log(`✉️ Escalation email sent to backup admins (${recipients.join(", ")}). ID: ${data?.id}`);
     return true;
   } catch (err) {
     console.error("❌ Failed to send escalation email:", err);
