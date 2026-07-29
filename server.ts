@@ -6,7 +6,7 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { db } from "./src/server/db";
 import { TransactionType, NetworkType } from "./src/types";
-import { sendHighValueAlert, sendApprovalAlert, sendEscalationAlert } from "./src/server/email";
+import { sendHighValueAlert, sendApprovalAlert, sendEscalationAlert, sendPasswordResetEmail } from "./src/server/email";
 
 async function startServer() {
   const app = express();
@@ -94,6 +94,37 @@ async function startServer() {
     db.logAction(user.id, user.name, "User Logout", undefined, "Logged out from terminal screen");
     res.json({ success: true });
   });
+
+  app.post("/api/auth/forgot-password", (req, res) => {
+  const { username } = req.body;
+  if (!username) {
+    return res.status(400).json({ error: "Username is required" });
+  }
+
+  try {
+    const { user, code } = db.requestPasswordReset(username);
+    sendPasswordResetEmail(user.username, user.role, code).catch(err => {
+      console.error("Async sendPasswordResetEmail failed:", err);
+    });
+    res.json({ success: true, message: "A reset code has been sent to the admin email for approval." });
+  } catch (e: any) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.post("/api/auth/reset-password", (req, res) => {
+  const { username, code, newPassword } = req.body;
+  if (!username || !code || !newPassword) {
+    return res.status(400).json({ error: "Username, code, and new password are all required" });
+  }
+
+  try {
+    const result = db.resetPassword(username, code, newPassword);
+    res.json(result);
+  } catch (e: any) {
+    res.status(400).json({ error: e.message });
+  }
+});
 
   // Branches
   app.get("/api/branches", requireAuth, (req, res) => {
