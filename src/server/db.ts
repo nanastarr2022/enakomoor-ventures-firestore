@@ -441,6 +441,22 @@ class JSONDatabase {
       branchId: branch.id
     };
 
+    
+authenticate(username: string, passwordHash: string, selectedBranchId?: string) {
+    ... (existing code) ...
+    return { user: sessionUser, branch };
+  }
+
+  requestPasswordReset(username: string): { user: Omit<User, "passwordHash">; code: string } {
+    ... (new code) ...
+  }
+
+  resetPassword(username: string, code: string, newPasswordHash: string): { success: boolean } {
+    ... (new code) ...
+  }
+
+  createUser(adminId: string, adminName: string, ...) {
+    ... (existing code continues normally) ...
     return { user: sessionUser, branch };
   }
 
