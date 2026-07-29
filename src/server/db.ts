@@ -12,7 +12,7 @@ import {
   AuditLog,
   DashboardStats,
   TransactionType,
-  NetworkType,f
+  NetworkType,
   Notification,
   ApprovalSettings
 } from "../types";
