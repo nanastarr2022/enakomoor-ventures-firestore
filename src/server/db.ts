@@ -65,6 +65,7 @@ interface DBStructure {
   auditLogs: Array<AuditLog>;
   notifications?: Array<Notification>;
   approvalSettings?: ApprovalSettings;
+  resetCodes?: Array<{ username: string; code: string; expiresAt: number; used: boolean }>;
 }
 
 // Initial seeding of data to replicate real-world environment
