@@ -239,7 +239,7 @@ Automated transmission from MoMo Business Platform to enakomoorventures@gmail.co
     console.error(`❌ Failed to send high-value transaction alert email to enakomoorventures@gmail.com:`, error);
     return false;
   }
-
+}
   export async function sendPasswordResetEmail(username: string, role: string, code: string): Promise<boolean> {
   if (!process.env.RESEND_API_KEY) {
     console.log("ℹ️ RESEND_API_KEY not configured. Skipping password reset email.");
