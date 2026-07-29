@@ -239,6 +239,51 @@ Automated transmission from MoMo Business Platform to enakomoorventures@gmail.co
     console.error(`❌ Failed to send high-value transaction alert email to enakomoorventures@gmail.com:`, error);
     return false;
   }
+
+  export async function sendPasswordResetEmail(username: string, role: string, code: string): Promise<boolean> {
+  if (!process.env.RESEND_API_KEY) {
+    console.log("ℹ️ RESEND_API_KEY not configured. Skipping password reset email.");
+    return false;
+  }
+
+  const subject = `🔑 Password Reset Request: ${username} (${role})`;
+  const htmlContent = `
+    <!DOCTYPE html>
+    <html>
+    <head><meta charset="utf-8"></head>
+    <body style="font-family: sans-serif; padding: 20px;">
+      <div style="border: 2px solid #2563eb; padding: 20px; border-radius: 8px; max-width: 500px; margin: 0 auto;">
+        <h2 style="color: #2563eb; margin-top: 0;">🔑 Password Reset Requested</h2>
+        <p><strong>${username}</strong> (${role}) has requested a password reset.</p>
+        <div style="background: #f1f5f9; padding: 16px; border-radius: 6px; text-align: center; margin: 20px 0;">
+          <span style="font-size: 12px; color: #64748b; text-transform: uppercase;">Reset Code</span>
+          <div style="font-size: 32px; font-weight: 800; letter-spacing: 4px; color: #0f172a;">${code}</div>
+        </div>
+        <p style="font-size: 13px; color: #64748b;">This code expires in 15 minutes. Share it only with the person who requested it, after confirming their identity.</p>
+      </div>
+    </body>
+    </html>
+  `;
+
+  try {
+    const { data, error } = await resend.emails.send({
+      from: FROM_ADDRESS,
+      to: "nanastarr2022@gmail.com",
+      subject,
+      html: htmlContent,
+    });
+
+    if (error) {
+      console.error("❌ Failed to send password reset email:", error);
+      return false;
+    }
+
+    console.log(`✉️ Password reset email sent successfully. ID: ${data?.id}`);
+    return true;
+  } catch (err) {
+    console.error("❌ Failed to send password reset email:", err);
+    return false;
+  }
 }
 
 /**
