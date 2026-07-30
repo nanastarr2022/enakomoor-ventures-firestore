@@ -134,6 +134,16 @@ export default function App() {
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [loginBranchId, setLoginBranchId] = useState<string>("");
   const [publicBranches, setPublicBranches] = useState<Branch[]>([]);
+  const [authView, setAuthView] = useState<"login" | "forgot" | "reset">("login");
+  const [forgotUsername, setForgotUsername] = useState("");
+  const [forgotError, setForgotError] = useState("");
+  const [forgotSuccess, setForgotSuccess] = useState("");
+  const [isSubmittingForgot, setIsSubmittingForgot] = useState(false);
+  const [resetCode, setResetCode] = useState("");
+  const [resetNewPassword, setResetNewPassword] = useState("");
+  const [resetError, setResetError] = useState("");
+  const [resetSuccess, setResetSuccess] = useState("");
+  const [isSubmittingReset, setIsSubmittingReset] = useState(false);
 
   // Core navigation tabs
   // "dashboard" | "transactions" | "debts" | "closing" | "commissions" | "reports" | "branches_workers" | "audit"
@@ -663,7 +673,63 @@ export default function App() {
       setIsLoggingIn(false);
     }
   };
+  const handleForgotPassword = async (e: React.FormEvent) => {
+  e.preventDefault();
+  setForgotError("");
+  setForgotSuccess("");
+  setIsSubmittingForgot(true);
+  try {
+    const res = await fetch("/api/auth/forgot-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: forgotUsername })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setForgotError(data.error || "Could not process request.");
+      setIsSubmittingForgot(false);
+      return;
+    }
+    setForgotSuccess(data.message || "A reset code has been sent.");
+    setAuthView("reset");
+  } catch (e) {
+    setForgotError("Could not reach server.");
+  } finally {
+    setIsSubmittingForgot(false);
+  }
+};
 
+const handleResetPassword = async (e: React.FormEvent) => {
+  e.preventDefault();
+  setResetError("");
+  setResetSuccess("");
+  setIsSubmittingReset(true);
+  try {
+    const res = await fetch("/api/auth/reset-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: forgotUsername, code: resetCode, newPassword: resetNewPassword })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setResetError(data.error || "Could not reset password.");
+      setIsSubmittingReset(false);
+      return;
+    }
+    setResetSuccess("Password reset successfully! You can now log in.");
+    setTimeout(() => {
+      setAuthView("login");
+      setForgotUsername("");
+      setResetCode("");
+      setResetNewPassword("");
+      setResetSuccess("");
+    }, 2000);
+  } catch (e) {
+    setResetError("Could not reach server.");
+  } finally {
+    setIsSubmittingReset(false);
+  }
+};
   const handleLogout = async () => {
     try {
       await fetch("/api/auth/logout", {
@@ -1647,6 +1713,7 @@ export default function App() {
 
         <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
           <div className="bg-white py-8 px-4 shadow-xl border border-neutral-200 rounded-2xl sm:px-10">
+            {authView === "login" && (
             <form id="login_form" onSubmit={handleLogin} className="space-y-6">
               {loginError && (
                 <div className="bg-red-50 border-l-4 border-red-500 p-4 text-sm text-red-700 flex items-start gap-2 rounded-r-lg">
@@ -1741,8 +1808,18 @@ export default function App() {
                 </div>
 
                 <div className="text-sm">
-                  <span className="text-xs text-neutral-500 cursor-not-allowed">Reset by Admin only</span>
-                </div>
+  <button
+    type="button"
+    onClick={() => {
+      setAuthView("forgot");
+      setForgotError("");
+      setForgotSuccess("");
+    }}
+    className="text-xs text-blue-600 hover:text-blue-800 font-semibold hover:underline cursor-pointer"
+  >
+    Forgot password?
+  </button>
+</div>
               </div>
 
               <button
@@ -1753,7 +1830,132 @@ export default function App() {
               >
                 {isLoggingIn ? "Verifying..." : "Login to Terminal"}
               </button>
+              
             </form>
+          )}
+
+          {authView === "forgot" && (
+            <form onSubmit={handleForgotPassword} className="space-y-6">
+              <div>
+                <h3 className="text-base font-bold text-navy-dark">Reset Your Password</h3>
+                <p className="text-xs text-neutral-500 mt-1">Enter your username. A reset code will be sent to the admin email for approval.</p>
+              </div>
+
+              {forgotError && (
+                <div className="bg-red-50 border-l-4 border-red-500 p-4 text-sm text-red-700 flex items-start gap-2 rounded-r-lg">
+                  <AlertTriangle className="size-5 shrink-0 text-red-600" />
+                  <span>{forgotError}</span>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-sm font-medium text-neutral-700">Username</label>
+                <div className="mt-1 relative rounded-md shadow-sm">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <User className="h-5 w-5 text-neutral-400" />
+                  </div>
+                  <input
+                    type="text"
+                    required
+                    value={forgotUsername}
+                    onChange={(e) => setForgotUsername(e.target.value)}
+                    className="block w-full pl-10 pr-3 py-2 border border-neutral-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    placeholder="Enter your username"
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={isSubmittingForgot}
+                className="w-full flex justify-center py-2.5 px-4 border border-transparent rounded-lg text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-lg shadow-blue-600/30 transition-all cursor-pointer disabled:opacity-50"
+              >
+                {isSubmittingForgot ? "Sending..." : "Send Reset Code"}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setAuthView("login")}
+                className="w-full text-xs text-neutral-500 hover:text-neutral-700 font-semibold hover:underline cursor-pointer"
+              >
+                ← Back to login
+              </button>
+            </form>
+          )}
+
+          {authView === "reset" && (
+            <form onSubmit={handleResetPassword} className="space-y-6">
+              <div>
+                <h3 className="text-base font-bold text-navy-dark">Enter Reset Code</h3>
+                <p className="text-xs text-neutral-500 mt-1">Enter the 6-digit code sent to the admin email, and choose a new password.</p>
+              </div>
+
+              {forgotSuccess && !resetError && (
+                <div className="bg-emerald-50 border-l-4 border-emerald-500 p-4 text-sm text-emerald-700 rounded-r-lg">
+                  {forgotSuccess}
+                </div>
+              )}
+
+              {resetError && (
+                <div className="bg-red-50 border-l-4 border-red-500 p-4 text-sm text-red-700 flex items-start gap-2 rounded-r-lg">
+                  <AlertTriangle className="size-5 shrink-0 text-red-600" />
+                  <span>{resetError}</span>
+                </div>
+              )}
+
+              {resetSuccess && (
+                <div className="bg-emerald-50 border-l-4 border-emerald-500 p-4 text-sm text-emerald-700 rounded-r-lg">
+                  {resetSuccess}
+                </div>
+              )}
+
+              <div>
+                <label className="block text-sm font-medium text-neutral-700">Reset Code</label>
+                <input
+                  type="text"
+                  required
+                  maxLength={6}
+                  value={resetCode}
+                  onChange={(e) => setResetCode(e.target.value)}
+                  className="mt-1 block w-full px-3 py-2 border border-neutral-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm text-center font-mono text-lg tracking-widest"
+                  placeholder="000000"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-neutral-700">New Password</label>
+                <div className="mt-1 relative rounded-md shadow-sm">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <Lock className="h-5 w-5 text-neutral-400" />
+                  </div>
+                  <input
+                    type="password"
+                    required
+                    value={resetNewPassword}
+                    onChange={(e) => setResetNewPassword(e.target.value)}
+                    className="block w-full pl-10 pr-3 py-2 border border-neutral-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    placeholder="••••••••"
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={isSubmittingReset}
+                className="w-full flex justify-center py-2.5 px-4 border border-transparent rounded-lg text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-lg shadow-blue-600/30 transition-all cursor-pointer disabled:opacity-50"
+              >
+                {isSubmittingReset ? "Resetting..." : "Reset Password"}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setAuthView("login")}
+                className="w-full text-xs text-neutral-500 hover:text-neutral-700 font-semibold hover:underline cursor-pointer"
+              >
+                ← Back to login
+              </button>
+            </form>
+          )}
           </div>
         </div>
       </div>
