@@ -736,10 +736,7 @@ const handleResetPassword = async (e: React.FormEvent) => {
         method: "POST",
         headers: { "Authorization": `Bearer ${token}` }
       });
-      const handleSessionInvalidated = () => {
-  alert("You have been logged out because your account was used to log in on another device.");
-  handleLogout();
-};
+      
     } catch (e) {
       // safe fallback
     }
@@ -763,6 +760,11 @@ const handleResetPassword = async (e: React.FormEvent) => {
   setSelectedBranchId(newBranchId);
   setPulseBranchSelector(false);
 };
+  
+  const handleSessionInvalidated = () => {
+    alert("You have been logged out because your account was used to log in on another device.");
+    handleLogout();
+  };
   const handleOpenShift = async (e: React.FormEvent) => {
     e.preventDefault();
     setShiftError("");
@@ -779,6 +781,13 @@ const handleResetPassword = async (e: React.FormEvent) => {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${token}`
         },
+        if (branchRes.status === 401) {
+        const errData = await branchRes.json();
+        if (errData.error === "SESSION_INVALIDATED") {
+          handleSessionInvalidated();
+          return;
+        }
+      }
         body: JSON.stringify({
           openingCash: Number(openingCash),
           openingFloatMtn: Number(openingMtn),
@@ -2180,11 +2189,23 @@ const handleResetPassword = async (e: React.FormEvent) => {
                           ) && (
                             <button
                               type="button"
-                             onClick={() => {
-                              handleBranchSwitch("all");
-                              setIsBranchSearchOpen(false);
-                               setBranchSearchQuery("");
+                              onClick={() => {
+                                handleBranchSwitch("all");
+                                setIsBranchSearchOpen(false);
+                                setBranchSearchQuery("");
+                              }}
+                              className={`w-full text-left px-3 py-2 text-xs font-semibold rounded-md flex items-center justify-between transition-colors ${
+                                selectedBranchId === "all"
+                                  ? "bg-blue-500 text-white font-bold"
+                                  : "text-slate-700 hover:bg-slate-100"
+                              }`}
+                            >
+                              <span>🌐 All Branches Consolidated</span>
+                              {selectedBranchId === "all" && <CheckCircle className="size-3.5 shrink-0" />}
+                            </button>
                           )}
+                          
+                          {branches
                           
                           {branches
                             .filter(b => b.name.toLowerCase().includes(branchSearchQuery.toLowerCase().trim()))
