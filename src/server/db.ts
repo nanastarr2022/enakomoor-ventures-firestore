@@ -436,31 +436,86 @@ class JSONDatabase {
     const { passwordHash: _, ...safeUser } = user;
     
     // Override default user branchId for this session's context
-    const sessionUser = {
+        const sessionUser = {
       ...safeUser,
       branchId: branch.id
     };
 
-    
-authenticate(username: string, passwordHash: string, selectedBranchId?: string) {
-    ... (existing code) ...
     return { user: sessionUser, branch };
   }
 
   requestPasswordReset(username: string): { user: Omit<User, "passwordHash">; code: string } {
-    ... (new code) ...
+    const user = this.data.users.find(u => u.username.toLowerCase() === username.toLowerCase());
+    if (!user) {
+      throw new Error("No account found with that username");
+    }
+
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = Date.now() + 15 * 60 * 1000; // 15 minutes
+
+    if (!this.data.resetCodes) {
+      this.data.resetCodes = [];
+    }
+
+    // Clear any previous unused codes for this user
+    this.data.resetCodes = this.data.resetCodes.filter(
+      r => r.username.toLowerCase() !== username.toLowerCase()
+    );
+
+    this.data.resetCodes.push({ username: user.username, code, expiresAt, used: false });
+
+    this.logAction(
+      user.id,
+      user.name,
+      "Password Reset Requested",
+      undefined,
+      `Reset code generated for ${user.role} account: ${user.username}`
+    );
+    this.save();
+
+    const { passwordHash: _, ...safeUser } = user;
+    return { user: safeUser, code };
   }
 
   resetPassword(username: string, code: string, newPasswordHash: string): { success: boolean } {
-    ... (new code) ...
-  }
+    if (!this.data.resetCodes) {
+      this.data.resetCodes = [];
+    }
 
-  createUser(adminId: string, adminName: string, ...) {
-    ... (existing code continues normally) ...
-    return { user: sessionUser, branch };
+    const entry = this.data.resetCodes.find(
+      r => r.username.toLowerCase() === username.toLowerCase() && r.code === code && !r.used
+    );
+
+    if (!entry) {
+      throw new Error("Invalid or already-used reset code");
+    }
+
+    if (Date.now() > entry.expiresAt) {
+      throw new Error("This reset code has expired. Please request a new one.");
+    }
+
+    const user = this.data.users.find(u => u.username.toLowerCase() === username.toLowerCase());
+    if (!user) {
+      throw new Error("User not found");
+    }
+
+    user.passwordHash = newPasswordHash;
+    entry.used = true;
+
+    this.logAction(
+      user.id,
+      user.name,
+      "Password Reset Completed",
+      "Password changed via reset code",
+      `${user.role} account ${user.username} password was reset`
+    );
+    this.save();
+
+    return { success: true };
   }
 
   createUser(adminId: string, adminName: string, name: string, username: string, passwordHash: string, role: "ADMIN" | "WORKER", branchId: string) {
+
     const exists = this.data.users.some(u => u.username.toLowerCase() === username.toLowerCase());
     if (exists) throw new Error("Username already exists");
     
