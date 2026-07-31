@@ -781,6 +781,7 @@ const handleResetPassword = async (e: React.FormEvent) => {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${token}`
         },
+      });
         if (branchRes.status === 401) {
         const errData = await branchRes.json();
         if (errData.error === "SESSION_INVALIDATED") {
