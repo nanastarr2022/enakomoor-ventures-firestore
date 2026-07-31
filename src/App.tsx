@@ -736,6 +736,10 @@ const handleResetPassword = async (e: React.FormEvent) => {
         method: "POST",
         headers: { "Authorization": `Bearer ${token}` }
       });
+      const handleSessionInvalidated = () => {
+  alert("You have been logged out because your account was used to log in on another device.");
+  handleLogout();
+};
     } catch (e) {
       // safe fallback
     }
