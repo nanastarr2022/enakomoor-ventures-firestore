@@ -3197,6 +3197,21 @@ const handleResetPassword = async (e: React.FormEvent) => {
                         </>
                       )}
                     </button>
+                    <button
+  onClick={() => {
+    const newDismissed: Record<string, boolean> = { ...dismissedAlerts };
+    lowFloatAlerts.forEach(alert => {
+      const key = `${alert.branchId}-${alert.network}-${alert.balance}`;
+      newDismissed[key] = true;
+    });
+    setDismissedAlerts(newDismissed);
+  }}
+  className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold bg-slate-700 hover:bg-slate-800 text-white transition-all shadow-sm cursor-pointer"
+  title="Dismiss all current low-float warnings"
+>
+  <X className="size-4" />
+  <span>Clear All</span>
+</button>
 
                     {currentUser?.role === "ADMIN" ? (
                       <button 
