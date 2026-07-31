@@ -434,6 +434,9 @@ class JSONDatabase {
     this.logAction(user.id, user.name, "User Login", undefined, `Logged into ${branch.name}`);
     
     const { passwordHash: _, ...safeUser } = user;
+    // Generate a new session token, invalidating any other active session for this user (workers only)
+    const sessionToken = `${Date.now()}-${Math.floor(Math.random() * 1000000)}`;
+    user.currentSessionToken = sessionToken;
     
     // Override default user branchId for this session's context
         const sessionUser = {
@@ -441,9 +444,14 @@ class JSONDatabase {
       branchId: branch.id
     };
 
-    return { user: sessionUser, branch };
+    return { user: sessionUser, branch, sessionToken };
   }
-
+    validateSession(userId: string, sessionToken: string): boolean {
+    const user = this.data.users.find(u => u.id === userId);
+    if (!user) return false;
+    if (user.role === "ADMIN") return true; // Admins can use multiple devices
+    return user.currentSessionToken === sessionToken;
+  }
   requestPasswordReset(username: string): { user: Omit<User, "passwordHash">; code: string } {
     const user = this.data.users.find(u => u.username.toLowerCase() === username.toLowerCase());
     if (!user) {
