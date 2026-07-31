@@ -750,7 +750,15 @@ const handleResetPassword = async (e: React.FormEvent) => {
     localStorage.removeItem("momo_branch");
     setActiveTab("dashboard");
   };
-
+  const handleBranchSwitch = (newBranchId: string) => {
+  if (currentUser?.role === "WORKER" && newBranchId !== selectedBranchId) {
+    alert("Switching branches requires you to log in again for security purposes.");
+    handleLogout();
+    return;
+  }
+  setSelectedBranchId(newBranchId);
+  setPulseBranchSelector(false);
+};
   const handleOpenShift = async (e: React.FormEvent) => {
     e.preventDefault();
     setShiftError("");
@@ -2168,21 +2176,10 @@ const handleResetPassword = async (e: React.FormEvent) => {
                           ) && (
                             <button
                               type="button"
-                              onClick={() => {
-                                setSelectedBranchId("all");
-                                setPulseBranchSelector(false);
-                                setIsBranchSearchOpen(false);
-                                setBranchSearchQuery("");
-                              }}
-                              className={`w-full text-left px-3 py-2 text-xs font-semibold rounded-md flex items-center justify-between transition-colors ${
-                                selectedBranchId === "all"
-                                  ? "bg-blue-500 text-white font-bold"
-                                  : "text-slate-700 hover:bg-slate-100"
-                              }`}
-                            >
-                              <span>🌐 All Branches Consolidated</span>
-                              {selectedBranchId === "all" && <CheckCircle className="size-3.5 shrink-0" />}
-                            </button>
+                             onClick={() => {
+                              handleBranchSwitch("all");
+                              setIsBranchSearchOpen(false);
+                               setBranchSearchQuery("");
                           )}
                           
                           {branches
@@ -2205,12 +2202,11 @@ const handleResetPassword = async (e: React.FormEvent) => {
                                 <button
                                   key={b.id}
                                   type="button"
-                                  onClick={() => {
-                                    setSelectedBranchId(b.id);
-                                    setPulseBranchSelector(false);
-                                    setIsBranchSearchOpen(false);
-                                    setBranchSearchQuery("");
-                                  }}
+                                 onClick={() => {
+                                handleBranchSwitch(b.id);
+                                setIsBranchSearchOpen(false);
+                                setBranchSearchQuery("");
+                                }}
                                   className={`w-full text-left px-3 py-2 text-xs font-semibold rounded-md flex items-center justify-between transition-colors ${
                                     isSelected
                                       ? "bg-blue-500 text-white font-bold"
@@ -2256,8 +2252,7 @@ const handleResetPassword = async (e: React.FormEvent) => {
                 id="admin_branch_selector"
                 value={selectedBranchId}
                 onChange={(e) => {
-                  setSelectedBranchId(e.target.value);
-                  setPulseBranchSelector(false);
+                 handleBranchSwitch(e.target.value);
                 }}
                 className={`font-bold text-sm border rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500/40 transition-all duration-200 hover:scale-[1.02] hover:shadow-md cursor-pointer ${
                   selectedBranchId === "all"
