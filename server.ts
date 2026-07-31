@@ -33,7 +33,8 @@ async function startServer() {
           username: parts[1],
           role: parts[2] as "ADMIN" | "WORKER",
           branchId: parts[3],
-          name: parts[4] ? decodeURIComponent(parts[4]) : parts[1]
+          name: parts[4] ? decodeURIComponent(parts[4]) : parts[1],
+          sessionToken: parts[5] || ""
         };
       }
     } catch (e) {
@@ -46,6 +47,9 @@ async function startServer() {
     const user = getAuthUser(req);
     if (!user) {
       return res.status(401).json({ error: "Access Denied: Unauthenticated session." });
+    }
+    if (!db.validateSession(user.id, user.sessionToken)) {
+      return res.status(401).json({ error: "SESSION_INVALIDATED", message: "Your account was logged in on another device. Please log in again." });
     }
     (req as any).user = user;
     next();
@@ -78,9 +82,9 @@ async function startServer() {
       return res.status(401).json({ error: "Invalid username or password" });
     }
 
-    const { user, branch } = authResult;
+    const { user, branch, sessionToken } = authResult;
     // Formulate a secure self-describing Bearer token using selected active branchId for this session
-    const token = `${user.id}:${user.username}:${user.role}:${user.branchId}:${encodeURIComponent(user.name)}`;
+    const token = `${user.id}:${user.username}:${user.role}:${user.branchId}:${encodeURIComponent(user.name)}:${sessionToken}`;
     
     res.json({
       token,
