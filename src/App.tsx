@@ -775,13 +775,32 @@ const handleResetPassword = async (e: React.FormEvent) => {
     }
 
     try {
-      const res = await fetch("/api/shifts/open", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
-      });
+    const res = await fetch("/api/shifts/open", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "Authorization": `Bearer ${token}`
+  },
+  body: JSON.stringify({
+    openingCash: Number(openingCash),
+    openingFloatMtn: Number(openingMtn),
+    openingFloatTelecel: Number(openingTelecel),
+    openingFloatAirtelTigo: Number(openingAirtel),
+    branchId:
+      selectedBranchId !== "all"
+        ? selectedBranchId
+        : (currentBranch?.id || "branch-a")
+  })
+});
+
+if (res.status === 401) {
+  const errData = await res.json();
+
+  if (errData.error === "SESSION_INVALIDATED") {
+    handleSessionInvalidated();
+    return;
+  }
+}
         if (branchRes.status === 401) {
         const errData = await branchRes.json();
         if (errData.error === "SESSION_INVALIDATED") {
