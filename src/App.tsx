@@ -3743,7 +3743,7 @@ const handleResetPassword = async (e: React.FormEvent) => {
               )}
 
               {/* LOW FLOAT SAFETY WARNING BANNER & ALARM SYSTEM */}
-              {lowFloatAlerts.length > 0 && (
+              {activeToasts.length > 0 && (
                 <div id="low-float-safety-banner" className="bg-red-50 dark:bg-red-950/20 border-2 border-red-500 text-red-950 dark:text-red-200 px-5 py-4 rounded-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-lg shadow-red-600/10 animate-pulse-slow">
                   <div className="flex items-start gap-3.5">
                     <span className="flex h-11 w-11 items-center justify-center rounded-full bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400 shrink-0 border border-red-200 dark:border-red-800">
