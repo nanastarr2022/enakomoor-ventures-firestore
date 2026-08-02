@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import admin from "firebase-admin";
+import { getFirestore } from "firebase-admin/firestore";
 import { 
   User, 
   Branch, 
@@ -14,7 +15,9 @@ import {
   TransactionType,
   NetworkType,
   Notification,
-  ApprovalSettings
+  ApprovalSettings,
+  ExternalCapital,
+  ExternalCapitalMedium
 } from "../types";
 
 const DB_DIR = path.join(process.cwd(), "data");
@@ -27,14 +30,76 @@ const DB_FILE = path.join(DB_DIR, "db.json");
 // configured (e.g. local development), the app falls back to the local db.json file only.
 let firestoreDoc: FirebaseFirestore.DocumentReference | null = null;
 
+// Helper function to safely parse FIREBASE_SERVICE_ACCOUNT string with multiple fallback strategies
+function parseServiceAccountJson(raw: string): any {
+  let str = raw.trim();
+
+  // Strip wrapping outer quotes if stringified twice
+  if ((str.startsWith("'") && str.endsWith("'")) || (str.startsWith('"') && str.endsWith('"') && !str.includes("\n"))) {
+    str = str.slice(1, -1).trim();
+  }
+
+  // Attempt 1: Direct standard JSON.parse
+  try {
+    return JSON.parse(str);
+  } catch {
+    // Continue to fallback strategies
+  }
+
+  // Attempt 2: Base64 decoding if not starting with '{'
+  if (!str.startsWith("{")) {
+    try {
+      const decoded = Buffer.from(str, "base64").toString("utf-8").trim();
+      if (decoded.startsWith("{")) {
+        return JSON.parse(decoded);
+      }
+    } catch {
+      // Continue
+    }
+  }
+
+  // Attempt 3: Replace stringified escaped newlines in private key
+  try {
+    const withNewlines = str.replace(/\\n/g, "\n");
+    return JSON.parse(withNewlines);
+  } catch {
+    // Continue
+  }
+
+  // Attempt 4: Convert single-quoted JSON or Python dict format ({'key': 'value'}) to double quotes
+  try {
+    const doubleQuoted = str
+      .replace(/\\n/g, "\\n")
+      .replace(/'/g, '"');
+    return JSON.parse(doubleQuoted);
+  } catch {
+    // Continue
+  }
+
+  // Attempt 5: Regex replace key names to double quotes
+  try {
+    const jsonified = str.replace(/(['"])?([a-zA-Z0-9_]+)\1\s*:\s*(['"])(.*?)\3/g, '"$2":"$4"');
+    return JSON.parse(jsonified);
+  } catch {
+    // Continue
+  }
+
+  throw new Error("Unable to parse FIREBASE_SERVICE_ACCOUNT JSON after multiple sanitization attempts");
+}
+
 function initFirestore() {
   const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
-  if (!raw) {
-    console.warn("[DB] FIREBASE_SERVICE_ACCOUNT not set — falling back to local db.json only (data will NOT persist across restarts on Render).");
+  if (!raw || !raw.trim()) {
+    console.warn("[DB] FIREBASE_SERVICE_ACCOUNT not set — falling back to local db.json persistence.");
     return;
   }
   try {
-    const serviceAccount = JSON.parse(raw);
+    const serviceAccount = parseServiceAccountJson(raw);
+    if (serviceAccount && typeof serviceAccount === "object" && serviceAccount.private_key) {
+      if (typeof serviceAccount.private_key === "string") {
+        serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, "\n");
+      }
+    }
     if (!admin.apps.length) {
       admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
     }
@@ -44,12 +109,12 @@ function initFirestore() {
     // requires upgrading to Blaze.
     const databaseId = process.env.FIRESTORE_DATABASE_ID;
     const firestore = databaseId
-      ? admin.firestore.getFirestore(admin.app(), databaseId)
+      ? getFirestore(admin.app(), databaseId)
       : admin.firestore();
     firestoreDoc = firestore.collection("enakomoorVentures").doc("state");
     console.log(`[DB] Connected to Firestore (database: ${databaseId || "(default)"}) for persistent storage.`);
-  } catch (err) {
-    console.error("[DB] Failed to initialize Firestore from FIREBASE_SERVICE_ACCOUNT:", err);
+  } catch (err: any) {
+    console.warn(`[DB] FIREBASE_SERVICE_ACCOUNT is invalid JSON or failed to initialize (${err.message}). Falling back to local db.json.`);
     firestoreDoc = null;
   }
 }
@@ -66,6 +131,7 @@ interface DBStructure {
   notifications?: Array<Notification>;
   approvalSettings?: ApprovalSettings;
   resetCodes?: Array<{ username: string; code: string; expiresAt: number; used: boolean }>;
+  externalCapitals?: Array<ExternalCapital>;
 }
 
 // Initial seeding of data to replicate real-world environment
@@ -280,6 +346,39 @@ class JSONDatabase {
     if (!this.data.notifications) {
       this.data.notifications = [];
     }
+    if (!this.data.externalCapitals) {
+      this.data.externalCapitals = [
+        {
+          id: "ext-cap-1",
+          branchId: "branch-a",
+          type: "ELECTRONIC",
+          network: "MTN",
+          sourceName: "External Admin - Chief Investor",
+          amount: 5000,
+          tappedAmount: 1200,
+          remainingAmount: 3800,
+          notes: "Emergency electronic float injected to prevent wallet dry-outs during peak hours",
+          recordedByUserId: "user-1",
+          recordedByUserName: "Kweku Boateng (Owner)",
+          createdAt: new Date().toISOString(),
+          status: "ACTIVE"
+        },
+        {
+          id: "ext-cap-2",
+          branchId: "branch-a",
+          type: "PHYSICAL",
+          sourceName: "External Admin - Kwesi Vault",
+          amount: 3000,
+          tappedAmount: 500,
+          remainingAmount: 2500,
+          notes: "Solicited physical cash injection for drawer reserves",
+          recordedByUserId: "user-1",
+          recordedByUserName: "Kweku Boateng (Owner)",
+          createdAt: new Date().toISOString(),
+          status: "ACTIVE"
+        }
+      ];
+    }
     if (!this.data.approvalSettings) {
       this.data.approvalSettings = {
         approvalThreshold: 5000,
@@ -320,6 +419,37 @@ class JSONDatabase {
       })),
       auditLogs: [],
       notifications: [],
+      externalCapitals: [
+        {
+          id: "ext-cap-1",
+          branchId: "branch-a",
+          type: "ELECTRONIC",
+          network: "MTN",
+          sourceName: "External Admin - Chief Investor",
+          amount: 5000,
+          tappedAmount: 1200,
+          remainingAmount: 3800,
+          notes: "Emergency electronic float injected to prevent wallet dry-outs during peak hours",
+          recordedByUserId: "user-1",
+          recordedByUserName: "Kweku Boateng (Owner)",
+          createdAt: new Date().toISOString(),
+          status: "ACTIVE"
+        },
+        {
+          id: "ext-cap-2",
+          branchId: "branch-a",
+          type: "PHYSICAL",
+          sourceName: "External Admin - Kwesi Vault",
+          amount: 3000,
+          tappedAmount: 500,
+          remainingAmount: 2500,
+          notes: "Solicited physical cash injection for drawer reserves",
+          recordedByUserId: "user-1",
+          recordedByUserName: "Kweku Boateng (Owner)",
+          createdAt: new Date().toISOString(),
+          status: "ACTIVE"
+        }
+      ],
       approvalSettings: {
         approvalThreshold: 5000,
         notificationRecipients: ["enakomoorventures@gmail.com"],
@@ -343,6 +473,7 @@ class JSONDatabase {
     this.data.shifts = [];
     this.data.transactions = [];
     this.data.debts = [];
+    this.data.externalCapitals = [];
     this.data.floats = this.data.branches.map(b => ({
       branchId: b.id,
       mtnFloat: 0,
@@ -840,6 +971,231 @@ class JSONDatabase {
     return newShift;
   }
 
+  // --- EXTERNAL CAPITAL MANAGEMENT ---
+  getExternalCapitals(branchId?: string): ExternalCapital[] {
+    if (!this.data.externalCapitals) this.data.externalCapitals = [];
+    let list = this.data.externalCapitals;
+    if (branchId && branchId !== "all") {
+      list = list.filter(e => e.branchId === branchId || e.branchId === "all");
+    }
+    return list.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  createExternalCapital(
+    userId: string,
+    userName: string,
+    params: {
+      branchId: string;
+      type: ExternalCapitalMedium;
+      network?: NetworkType;
+      sourceName: string;
+      amount: number;
+      notes?: string;
+      shiftId?: string;
+      directInject?: boolean;
+    }
+  ): ExternalCapital {
+    const { branchId, type, network, sourceName, amount, notes, shiftId, directInject = true } = params;
+
+    if (amount <= 0) {
+      throw new Error("External capital amount must be greater than zero GHS");
+    }
+    if (!sourceName || !sourceName.trim()) {
+      throw new Error("Source/Admin name soliciting the external capital is required");
+    }
+
+    if (!this.data.externalCapitals) this.data.externalCapitals = [];
+
+    const newCap: ExternalCapital = {
+      id: `ext-cap-${Date.now()}`,
+      branchId: branchId || "branch-a",
+      shiftId,
+      type,
+      network: type === "ELECTRONIC" ? network : undefined,
+      sourceName: sourceName.trim(),
+      amount: Number(amount),
+      tappedAmount: 0,
+      remainingAmount: Number(amount),
+      notes: notes?.trim(),
+      recordedByUserId: userId,
+      recordedByUserName: userName,
+      createdAt: new Date().toISOString(),
+      status: "ACTIVE"
+    };
+
+    this.data.externalCapitals.unshift(newCap);
+
+    if (directInject) {
+      if (type === "ELECTRONIC" && network) {
+        const fl = this.getFloatByBranch(branchId);
+        if (network === "MTN") fl.mtnFloat = Number((fl.mtnFloat + amount).toFixed(2));
+        else if (network === "TELECEL") fl.telecelFloat = Number((fl.telecelFloat + amount).toFixed(2));
+        else if (network === "AIRTELTIGO") fl.airtelTigoFloat = Number((fl.airtelTigoFloat + amount).toFixed(2));
+        
+        newCap.tappedAmount = Number(amount);
+        newCap.remainingAmount = 0;
+        newCap.status = "EXHAUSTED";
+      }
+
+      if (shiftId) {
+        const shift = this.data.shifts.find(s => s.id === shiftId);
+        if (shift) {
+          if (type === "ELECTRONIC") {
+            shift.injectedExternalElectronic = Number(((shift.injectedExternalElectronic || 0) + amount).toFixed(2));
+          } else {
+            shift.injectedExternalCash = Number(((shift.injectedExternalCash || 0) + amount).toFixed(2));
+          }
+        }
+      }
+    }
+
+    this.logAction(
+      userId,
+      userName,
+      "External Capital Injected",
+      undefined,
+      `Injected GHS ${amount} (${type}${network ? ' - ' + network : ''}) solicited from '${sourceName}'. Notes: ${notes || 'N/A'}`
+    );
+
+    this.save();
+    return newCap;
+  }
+
+  tapExternalCapital(
+    adminId: string,
+    adminName: string,
+    id: string,
+    tapAmount: number,
+    reason?: string
+  ): ExternalCapital {
+    if (!this.data.externalCapitals) this.data.externalCapitals = [];
+    const index = this.data.externalCapitals.findIndex(e => e.id === id);
+    if (index === -1) throw new Error("External capital record not found");
+
+    const record = this.data.externalCapitals[index];
+    if (record.remainingAmount < tapAmount) {
+      throw new Error(`Cannot tap GHS ${tapAmount}: only GHS ${record.remainingAmount} remaining in reserve`);
+    }
+
+    record.tappedAmount = Number((record.tappedAmount + tapAmount).toFixed(2));
+    record.remainingAmount = Number((record.remainingAmount - tapAmount).toFixed(2));
+    if (record.remainingAmount <= 0) record.status = "EXHAUSTED";
+
+    if (record.type === "ELECTRONIC" && record.network) {
+      const fl = this.getFloatByBranch(record.branchId);
+      if (record.network === "MTN") fl.mtnFloat = Number((fl.mtnFloat + tapAmount).toFixed(2));
+      else if (record.network === "TELECEL") fl.telecelFloat = Number((fl.telecelFloat + tapAmount).toFixed(2));
+      else if (record.network === "AIRTELTIGO") fl.airtelTigoFloat = Number((fl.airtelTigoFloat + tapAmount).toFixed(2));
+    }
+
+    this.logAction(
+      adminId,
+      adminName,
+      "External Capital Tapped Manually",
+      `GHS ${tapAmount} tapped`,
+      `Source: ${record.sourceName} | Reason: ${reason || 'Manual Tap'} | Remaining: GHS ${record.remainingAmount}`
+    );
+
+    this.save();
+    return record;
+  }
+
+  returnExternalCapital(
+    adminId: string,
+    adminName: string,
+    id: string
+  ): ExternalCapital {
+    if (!this.data.externalCapitals) this.data.externalCapitals = [];
+    const index = this.data.externalCapitals.findIndex(e => e.id === id);
+    if (index === -1) throw new Error("External capital record not found");
+
+    const record = this.data.externalCapitals[index];
+    record.status = "RETURNED";
+    record.remainingAmount = 0;
+
+    this.logAction(
+      adminId,
+      adminName,
+      "External Capital Returned",
+      `ID: ${id}`,
+      `Marked external capital from '${record.sourceName}' as returned / settled.`
+    );
+
+    this.save();
+    return record;
+  }
+
+  tapExternalCapitalIfNeeded(
+    branchId: string, 
+    medium: ExternalCapitalMedium, 
+    shortfallAmount: number, 
+    network?: NetworkType, 
+    userId?: string, 
+    userName?: string, 
+    txType?: string,
+    shiftId?: string
+  ): number {
+    if (shortfallAmount <= 0) return 0;
+    if (!this.data.externalCapitals) this.data.externalCapitals = [];
+
+    const eligible = this.data.externalCapitals.filter(e => 
+      e.status === "ACTIVE" && 
+      e.remainingAmount > 0 && 
+      (e.branchId === branchId || e.branchId === "all") &&
+      e.type === medium &&
+      (!network || !e.network || e.network === network)
+    );
+
+    let remainingShortfall = shortfallAmount;
+    let totalTapped = 0;
+
+    for (const record of eligible) {
+      if (remainingShortfall <= 0) break;
+
+      const tapAmount = Math.min(record.remainingAmount, remainingShortfall);
+      record.tappedAmount = Number((record.tappedAmount + tapAmount).toFixed(2));
+      record.remainingAmount = Number((record.remainingAmount - tapAmount).toFixed(2));
+      if (record.remainingAmount <= 0) {
+        record.status = "EXHAUSTED";
+      }
+
+      remainingShortfall = Number((remainingShortfall - tapAmount).toFixed(2));
+      totalTapped = Number((totalTapped + tapAmount).toFixed(2));
+
+      if (medium === "ELECTRONIC" && network) {
+        const fl = this.getFloatByBranch(branchId);
+        if (network === "MTN") fl.mtnFloat = Number((fl.mtnFloat + tapAmount).toFixed(2));
+        else if (network === "TELECEL") fl.telecelFloat = Number((fl.telecelFloat + tapAmount).toFixed(2));
+        else if (network === "AIRTELTIGO") fl.airtelTigoFloat = Number((fl.airtelTigoFloat + tapAmount).toFixed(2));
+      }
+
+      if (shiftId) {
+        const shift = this.data.shifts.find(s => s.id === shiftId);
+        if (shift) {
+          if (medium === "ELECTRONIC") {
+            shift.tappedExternalElectronic = Number(((shift.tappedExternalElectronic || 0) + tapAmount).toFixed(2));
+          } else {
+            shift.tappedExternalCash = Number(((shift.tappedExternalCash || 0) + tapAmount).toFixed(2));
+          }
+        }
+      }
+
+      this.logAction(
+        userId || "system",
+        userName || "System Auto-Tap",
+        "⚡ External Capital Tapped",
+        `Shortfall: GHS ${shortfallAmount} (${medium}${network ? ' - ' + network : ''})`,
+        `Tapped GHS ${tapAmount} from '${record.sourceName}' for ${txType || 'Transaction'}. Remaining reserve: GHS ${record.remainingAmount}`
+      );
+    }
+
+    if (totalTapped > 0) {
+      this.save();
+    }
+
+    return totalTapped;
+  }
+
   computeActiveShiftExpectedCash(shiftId: string, userName: string): number {
     const shift = this.data.shifts.find(s => s.id === shiftId);
     if (!shift) return 0;
@@ -871,11 +1227,22 @@ class JSONDatabase {
     );
     const debtsIssuedSum = shiftDebtsIssued.reduce((sum, d) => sum + d.amount, 0);
 
-    const expectedCash = shift.openingCash + depositsSum + commissionsSum - withdrawalsSum - debtsIssuedSum;
+    // Physical Cash External Capital Injected or Tapped into shift
+    const externalCashAdded = (shift.injectedExternalCash || 0) + (shift.tappedExternalCash || 0);
+
+    const expectedCash = shift.openingCash + depositsSum + commissionsSum + externalCashAdded - withdrawalsSum - debtsIssuedSum;
     return Number(expectedCash.toFixed(2));
   }
 
-  closeShift(userId: string, userName: string, shiftId: string, actualCashCounted: number): Shift {
+  closeShift(
+    userId: string, 
+    userName: string, 
+    shiftId: string, 
+    actualCashCounted: number,
+    actualFloatMtn: number = 0,
+    actualFloatTelecel: number = 0,
+    actualFloatAirtelTigo: number = 0
+  ): Shift {
     const shiftIndex = this.data.shifts.findIndex(s => s.id === shiftId && s.userId === userId && s.status === "OPEN");
     if (shiftIndex === -1) {
       throw new Error("Active shift not found or already closed");
@@ -885,43 +1252,79 @@ class JSONDatabase {
 
     // Compute Expected Cash:
     const expectedCash = this.computeActiveShiftExpectedCash(shiftId, userName);
-    const difference = actualCashCounted - expectedCash;
+    const differenceCash = Number((actualCashCounted - expectedCash).toFixed(2));
+
+    // Get expected float balances for the branch
+    const currentFloat = this.data.floats.find(f => f.branchId === shift.branchId);
+    const expectedFloatMtn = currentFloat ? currentFloat.mtnFloat : shift.openingFloatMtn;
+    const expectedFloatTelecel = currentFloat ? currentFloat.telecelFloat : shift.openingFloatTelecel;
+    const expectedFloatAirtelTigo = currentFloat ? currentFloat.airtelTigoFloat : shift.openingFloatAirtelTigo;
+
+    const differenceFloatMtn = Number((actualFloatMtn - expectedFloatMtn).toFixed(2));
+    const differenceFloatTelecel = Number((actualFloatTelecel - expectedFloatTelecel).toFixed(2));
+    const differenceFloatAirtelTigo = Number((actualFloatAirtelTigo - expectedFloatAirtelTigo).toFixed(2));
 
     shift.expectedCash = expectedCash;
     shift.actualCash = actualCashCounted;
-    shift.difference = difference;
+    shift.difference = differenceCash;
+
+    shift.expectedFloatMtn = expectedFloatMtn;
+    shift.actualFloatMtn = actualFloatMtn;
+    shift.differenceFloatMtn = differenceFloatMtn;
+
+    shift.expectedFloatTelecel = expectedFloatTelecel;
+    shift.actualFloatTelecel = actualFloatTelecel;
+    shift.differenceFloatTelecel = differenceFloatTelecel;
+
+    shift.expectedFloatAirtelTigo = expectedFloatAirtelTigo;
+    shift.actualFloatAirtelTigo = actualFloatAirtelTigo;
+    shift.differenceFloatAirtelTigo = differenceFloatAirtelTigo;
+
     shift.status = "CLOSED";
     shift.endTime = new Date().toTimeString().split(" ")[0];
 
-    // Add shortage notification if difference is negative (cash shortage)
-    if (difference < 0) {
+    // Compare all figures and raise alarm notifications to Admin if any discrepancies exist
+    const mismatches: string[] = [];
+    if (differenceCash !== 0) {
+      mismatches.push(`Physical Cash: Expected GHS ${expectedCash.toLocaleString()}, Entered GHS ${actualCashCounted.toLocaleString()} (Variance: GHS ${differenceCash > 0 ? '+' : ''}${differenceCash})`);
+    }
+    if (differenceFloatMtn !== 0) {
+      mismatches.push(`MTN Float: Expected GHS ${expectedFloatMtn.toLocaleString()}, Entered GHS ${actualFloatMtn.toLocaleString()} (Variance: GHS ${differenceFloatMtn > 0 ? '+' : ''}${differenceFloatMtn})`);
+    }
+    if (differenceFloatTelecel !== 0) {
+      mismatches.push(`Telecel Float: Expected GHS ${expectedFloatTelecel.toLocaleString()}, Entered GHS ${actualFloatTelecel.toLocaleString()} (Variance: GHS ${differenceFloatTelecel > 0 ? '+' : ''}${differenceFloatTelecel})`);
+    }
+    if (differenceFloatAirtelTigo !== 0) {
+      mismatches.push(`AirtelTigo Float: Expected GHS ${expectedFloatAirtelTigo.toLocaleString()}, Entered GHS ${actualFloatAirtelTigo.toLocaleString()} (Variance: GHS ${differenceFloatAirtelTigo > 0 ? '+' : ''}${differenceFloatAirtelTigo})`);
+    }
+
+    if (mismatches.length > 0) {
       if (!this.data.notifications) {
         this.data.notifications = [];
       }
-      const shortageAmount = Math.abs(difference);
       const branch = this.data.branches.find(b => b.id === shift.branchId);
       const branchName = branch ? branch.name : shift.branchId;
       
-      const newNotification: Notification = {
+      const alarmNotification: Notification = {
         id: `noti-${Date.now()}`,
         branchId: shift.branchId,
         branchName,
-        message: `Cash Shortage Alert: Shift closed by ${userName} at ${branchName} has a cash shortage of GHS ${shortageAmount.toLocaleString()} (Expected: GHS ${expectedCash.toLocaleString()}, Actual Counted: GHS ${actualCashCounted.toLocaleString()}).`,
+        message: `🚨 Shift Closing Alarm: Agent ${userName} closed shift at ${branchName} with ${mismatches.length} figure mismatch(es): ${mismatches.join(" | ")}.`,
         type: "shortage",
         timestamp: new Date().toISOString(),
         isRead: false,
         shiftId: shift.id,
-        difference: difference
+        difference: differenceCash
       };
-      this.data.notifications.unshift(newNotification);
+      this.data.notifications.unshift(alarmNotification);
     }
 
     this.logAction(
       userId, 
       userName, 
       "Shift Closed", 
-      `Expected cash: GHS ${expectedCash}`, 
-      `Actual counted: GHS ${actualCashCounted} (Diff: GHS ${difference})`
+      `Cash: GHS ${expectedCash} exp / ${actualCashCounted} act | MTN: ${expectedFloatMtn}/${actualFloatMtn} | Telecel: ${expectedFloatTelecel}/${actualFloatTelecel} | AirtelTigo: ${expectedFloatAirtelTigo}/${actualFloatAirtelTigo}`, 
+      mismatches.length > 0 ? `🚨 DISCREPANCIES DETECTED: ${mismatches.join("; ")}` : "All closing figures verified perfectly matching expected balances."
     );
     this.save();
     return shift;
@@ -1000,41 +1403,67 @@ class JSONDatabase {
     // Process system balance logic in-memory prior to logging & saving
     if (type === "deposit") {
       // DEPOSIT: Reduce Float, Increase Cash in drawer
-      if (network === "MTN" && fl.mtnFloat < amount) throw new Error("Insufficient MTN float balance");
-      if (network === "TELECEL" && fl.telecelFloat < amount) throw new Error("Insufficient Telecel float balance");
-      if (network === "AIRTELTIGO" && fl.airtelTigoFloat < amount) throw new Error("Insufficient AirtelTigo float balance");
+      const currFloat = network === "MTN" ? fl.mtnFloat : network === "TELECEL" ? fl.telecelFloat : fl.airtelTigoFloat;
+      if (currFloat < amount) {
+        // Tap external electronic capital automatically to cover shortfall
+        const shortfall = amount - currFloat;
+        this.tapExternalCapitalIfNeeded(branchId, "ELECTRONIC", shortfall, network, userId, userName, "DEPOSIT", activeShift?.id);
+      }
 
-      if (network === "MTN") fl.mtnFloat -= amount;
-      else if (network === "TELECEL") fl.telecelFloat -= amount;
-      else if (network === "AIRTELTIGO") fl.airtelTigoFloat -= amount;
+      if (network === "MTN" && fl.mtnFloat < amount) throw new Error(`Insufficient MTN float balance (GHS ${fl.mtnFloat.toLocaleString()} available)`);
+      if (network === "TELECEL" && fl.telecelFloat < amount) throw new Error(`Insufficient Telecel float balance (GHS ${fl.telecelFloat.toLocaleString()} available)`);
+      if (network === "AIRTELTIGO" && fl.airtelTigoFloat < amount) throw new Error(`Insufficient AirtelTigo float balance (GHS ${fl.airtelTigoFloat.toLocaleString()} available)`);
+
+      if (network === "MTN") fl.mtnFloat = Number((fl.mtnFloat - amount).toFixed(2));
+      else if (network === "TELECEL") fl.telecelFloat = Number((fl.telecelFloat - amount).toFixed(2));
+      else if (network === "AIRTELTIGO") fl.airtelTigoFloat = Number((fl.airtelTigoFloat - amount).toFixed(2));
 
     } else if (type === "withdrawal") {
       // WITHDRAWAL: Increase Float, Deduct Cash (give out physical cash to customer)
-      if (network === "MTN") fl.mtnFloat += amount;
-      else if (network === "TELECEL") fl.telecelFloat += amount;
-      else if (network === "AIRTELTIGO") fl.airtelTigoFloat += amount;
+      if (activeShift) {
+        const currentDrawerCash = this.computeActiveShiftExpectedCash(activeShift.id, activeShift.userName);
+        if (currentDrawerCash < amount) {
+          const shortfall = amount - currentDrawerCash;
+          this.tapExternalCapitalIfNeeded(branchId, "PHYSICAL", shortfall, undefined, userId, userName, "WITHDRAWAL", activeShift.id);
+        }
+      }
+
+      if (network === "MTN") fl.mtnFloat = Number((fl.mtnFloat + amount).toFixed(2));
+      else if (network === "TELECEL") fl.telecelFloat = Number((fl.telecelFloat + amount).toFixed(2));
+      else if (network === "AIRTELTIGO") fl.airtelTigoFloat = Number((fl.airtelTigoFloat + amount).toFixed(2));
 
     } else if (type === "send_money") {
-      // SEND MONEY: This reduces operator float (assumes agent transfers out from wallet) and takes equivalent physical cash from customer
-      // Support MTN, Telecel, and AirtelTigo
+      // SEND MONEY: Reduces operator float and takes equivalent physical cash from customer
       const net = network || "MTN";
-      if (net === "MTN" && fl.mtnFloat < amount) throw new Error("Insufficient MTN float balance to execute send money");
-      if (net === "TELECEL" && fl.telecelFloat < amount) throw new Error("Insufficient Telecel float balance to execute send money");
-      if (net === "AIRTELTIGO" && fl.airtelTigoFloat < amount) throw new Error("Insufficient AirtelTigo float balance to execute send money");
+      const currFloat = net === "MTN" ? fl.mtnFloat : net === "TELECEL" ? fl.telecelFloat : fl.airtelTigoFloat;
+      if (currFloat < amount) {
+        const shortfall = amount - currFloat;
+        this.tapExternalCapitalIfNeeded(branchId, "ELECTRONIC", shortfall, net, userId, userName, "SEND_MONEY", activeShift?.id);
+      }
 
-      if (net === "MTN") fl.mtnFloat -= amount;
-      else if (net === "TELECEL") fl.telecelFloat -= amount;
-      else if (net === "AIRTELTIGO") fl.airtelTigoFloat -= amount;
+      if (net === "MTN" && fl.mtnFloat < amount) throw new Error(`Insufficient MTN float balance to execute send money (GHS ${fl.mtnFloat.toLocaleString()} available)`);
+      if (net === "TELECEL" && fl.telecelFloat < amount) throw new Error(`Insufficient Telecel float balance to execute send money (GHS ${fl.telecelFloat.toLocaleString()} available)`);
+      if (net === "AIRTELTIGO" && fl.airtelTigoFloat < amount) throw new Error(`Insufficient AirtelTigo float balance to execute send money (GHS ${fl.airtelTigoFloat.toLocaleString()} available)`);
+
+      if (net === "MTN") fl.mtnFloat = Number((fl.mtnFloat - amount).toFixed(2));
+      else if (net === "TELECEL") fl.telecelFloat = Number((fl.telecelFloat - amount).toFixed(2));
+      else if (net === "AIRTELTIGO") fl.airtelTigoFloat = Number((fl.airtelTigoFloat - amount).toFixed(2));
 
     } else if (type === "airtime") {
-      // AIRTIME: Assumes airtime sold from float wallet directly to customer, cash received in drawer
-      if (network === "MTN" && fl.mtnFloat < amount) throw new Error("Insufficient MTN float to perform airtime sale");
-      if (network === "TELECEL" && fl.telecelFloat < amount) throw new Error("Insufficient Telecel float to perform airtime sale");
-      if (network === "AIRTELTIGO" && fl.airtelTigoFloat < amount) throw new Error("Insufficient AirtelTigo float to perform airtime sale");
+      // AIRTIME: Sold from float wallet directly to customer, cash received in drawer
+      const currFloat = network === "MTN" ? fl.mtnFloat : network === "TELECEL" ? fl.telecelFloat : fl.airtelTigoFloat;
+      if (currFloat < amount) {
+        const shortfall = amount - currFloat;
+        this.tapExternalCapitalIfNeeded(branchId, "ELECTRONIC", shortfall, network, userId, userName, "AIRTIME", activeShift?.id);
+      }
 
-      if (network === "MTN") fl.mtnFloat -= amount;
-      else if (network === "TELECEL") fl.telecelFloat -= amount;
-      else if (network === "AIRTELTIGO") fl.airtelTigoFloat -= amount;
+      if (network === "MTN" && fl.mtnFloat < amount) throw new Error(`Insufficient MTN float to perform airtime sale (GHS ${fl.mtnFloat.toLocaleString()} available)`);
+      if (network === "TELECEL" && fl.telecelFloat < amount) throw new Error(`Insufficient Telecel float to perform airtime sale (GHS ${fl.telecelFloat.toLocaleString()} available)`);
+      if (network === "AIRTELTIGO" && fl.airtelTigoFloat < amount) throw new Error(`Insufficient AirtelTigo float to perform airtime sale (GHS ${fl.airtelTigoFloat.toLocaleString()} available)`);
+
+      if (network === "MTN") fl.mtnFloat = Number((fl.mtnFloat - amount).toFixed(2));
+      else if (network === "TELECEL") fl.telecelFloat = Number((fl.telecelFloat - amount).toFixed(2));
+      else if (network === "AIRTELTIGO") fl.airtelTigoFloat = Number((fl.airtelTigoFloat - amount).toFixed(2));
     }
 
     const newTx: Transaction = {
@@ -1151,7 +1580,12 @@ class JSONDatabase {
     const shift = this.data.shifts.find(s => s.id === tx.shiftId);
     if (shift) {
       shift.expectedCash = this.computeActiveShiftExpectedCash(shift.id, shift.userName);
+      if (shift.status === "CLOSED" && shift.actualCash !== undefined) {
+        shift.difference = Number((shift.actualCash - shift.expectedCash).toFixed(2));
+      }
     }
+
+    tx.correctedAt = new Date().toISOString();
 
     this.logAction(
       adminId, 
@@ -1160,6 +1594,120 @@ class JSONDatabase {
       `Transaction ${tx.id} active`, 
       `Reversed reason: ${reason}. System balances recalculated.`
     );
+    this.checkFloatThresholds(tx.branchId);
+    this.save();
+    return tx;
+  }
+
+  correctTransaction(
+    adminId: string,
+    adminName: string,
+    transactionId: string,
+    updates: {
+      type?: TransactionType;
+      network?: NetworkType;
+      customerNumber?: string;
+      senderNumber?: string;
+      receiverNumber?: string;
+      amount?: number;
+      commission?: number;
+      status?: "ACTIVE" | "REVERSED" | "PENDING_APPROVAL" | "REJECTED";
+      reason: string;
+    }
+  ): Transaction {
+    const adminUser = this.data.users.find(u => u.id === adminId);
+    if (adminUser && adminUser.role !== "ADMIN") {
+      throw new Error("Access Denied: Only administrators are authorized to correct transactions.");
+    }
+
+    const txIndex = this.data.transactions.findIndex(t => t.id === transactionId);
+    if (txIndex === -1) {
+      throw new Error("Transaction not found");
+    }
+
+    const tx = this.data.transactions[txIndex];
+    if (!updates.reason || !updates.reason.trim()) {
+      throw new Error("A detailed correction reason is required for audit logging.");
+    }
+
+    // Save snapshot of previous values for audit logging & float rollback
+    const oldBranchId = tx.branchId;
+    const oldType = tx.type;
+    const oldNetwork = tx.network || "MTN";
+    const oldAmount = tx.amount;
+    const oldStatus = tx.status;
+    const oldCommission = tx.commission;
+
+    // 1. If previous status was ACTIVE, un-apply its float effect
+    if (oldStatus === "ACTIVE") {
+      const fl = this.getFloatByBranch(oldBranchId);
+      if (oldType === "deposit" || oldType === "send_money" || oldType === "airtime") {
+        if (oldNetwork === "MTN") fl.mtnFloat += oldAmount;
+        else if (oldNetwork === "TELECEL") fl.telecelFloat += oldAmount;
+        else if (oldNetwork === "AIRTELTIGO") fl.airtelTigoFloat += oldAmount;
+      } else if (oldType === "withdrawal") {
+        if (oldNetwork === "MTN") fl.mtnFloat = Math.max(0, fl.mtnFloat - oldAmount);
+        else if (oldNetwork === "TELECEL") fl.telecelFloat = Math.max(0, fl.telecelFloat - oldAmount);
+        else if (oldNetwork === "AIRTELTIGO") fl.airtelTigoFloat = Math.max(0, fl.airtelTigoFloat - oldAmount);
+      }
+    }
+
+    // 2. Apply field updates
+    if (updates.type) tx.type = updates.type;
+    if (updates.network) tx.network = updates.network;
+    if (updates.customerNumber !== undefined) tx.customerNumber = updates.customerNumber;
+    if (updates.senderNumber !== undefined) tx.senderNumber = updates.senderNumber;
+    if (updates.receiverNumber !== undefined) tx.receiverNumber = updates.receiverNumber;
+    if (updates.amount !== undefined && !isNaN(Number(updates.amount))) {
+      const newAmt = Number(updates.amount);
+      if (newAmt <= 0) throw new Error("Amount must be greater than zero GHS");
+      tx.amount = newAmt;
+    }
+    if (updates.commission !== undefined && !isNaN(Number(updates.commission))) {
+      tx.commission = Number(updates.commission);
+    }
+    if (updates.status) tx.status = updates.status;
+
+    tx.correctedBy = adminName;
+    tx.correctionReason = updates.reason.trim();
+    tx.correctedAt = new Date().toISOString();
+
+    // 3. If new status is ACTIVE, apply its new float effect
+    if (tx.status === "ACTIVE") {
+      const fl = this.getFloatByBranch(tx.branchId);
+      const newNetwork = tx.network || "MTN";
+      const newAmount = tx.amount;
+
+      if (tx.type === "deposit" || tx.type === "send_money" || tx.type === "airtime") {
+        if (newNetwork === "MTN") fl.mtnFloat -= newAmount;
+        else if (newNetwork === "TELECEL") fl.telecelFloat -= newAmount;
+        else if (newNetwork === "AIRTELTIGO") fl.airtelTigoFloat -= newAmount;
+      } else if (tx.type === "withdrawal") {
+        if (newNetwork === "MTN") fl.mtnFloat += newAmount;
+        else if (newNetwork === "TELECEL") fl.telecelFloat += newAmount;
+        else if (newNetwork === "AIRTELTIGO") fl.airtelTigoFloat += newAmount;
+      }
+    }
+
+    // 4. Recalculate shift expected cash for affected shift
+    const shift = this.data.shifts.find(s => s.id === tx.shiftId);
+    if (shift) {
+      shift.expectedCash = this.computeActiveShiftExpectedCash(shift.id, shift.userName);
+      if (shift.status === "CLOSED" && shift.actualCash !== undefined) {
+        shift.difference = Number((shift.actualCash - shift.expectedCash).toFixed(2));
+      }
+    }
+
+    // 5. Audit Logging
+    const changeSummary = `GHS ${oldAmount} (${oldType}/${oldNetwork}) -> GHS ${tx.amount} (${tx.type}/${tx.network || "MTN"}) [Status: ${oldStatus} -> ${tx.status}]`;
+    this.logAction(
+      adminId,
+      adminName,
+      "Transaction Corrected",
+      `Tx ID: ${tx.id} | Previous: GHS ${oldAmount} Comm: GHS ${oldCommission}`,
+      `Corrected by Admin ${adminName}. Reason: ${updates.reason}. Changes: ${changeSummary}. Float & shift expected cash auto-recalculated.`
+    );
+
     this.checkFloatThresholds(tx.branchId);
     this.save();
     return tx;
@@ -1351,29 +1899,81 @@ class JSONDatabase {
     if (branchId && branchId !== "all") {
       list = list.filter(d => d.branchId === branchId);
     }
-    return list.sort((a, b) => b.dueDate.localeCompare(a.dueDate));
+    const getEntryTime = (d: Debt): number => {
+      if (d.createdAt) {
+        const t = new Date(d.createdAt).getTime();
+        if (!isNaN(t)) return t;
+      }
+      if (d.id && d.id.startsWith("debt-")) {
+        const tStr = d.id.replace("debt-", "");
+        const parsed = parseInt(tStr, 10);
+        if (!isNaN(parsed) && parsed > 1000000000) return parsed;
+      }
+      if (d.dueDate) {
+        const t = new Date(d.dueDate).getTime();
+        if (!isNaN(t)) return t;
+      }
+      return 0;
+    };
+    return list.sort((a, b) => getEntryTime(b) - getEntryTime(a));
   }
 
-  addDebt(userId: string, userName: string, branchId: string, customerName: string, customerNumber: string, amount: number, reason: string, dueDate: string): Debt {
+  addDebt(
+    userId: string, 
+    userName: string, 
+    branchId: string, 
+    customerName: string, 
+    customerNumber: string, 
+    amount: number, 
+    reason: string, 
+    dueDate: string, 
+    commission: number = 0, 
+    paymentMode: "PHYSICAL_CASH" | "ELECTRONIC_MONEY" = "PHYSICAL_CASH",
+    paymentNetwork?: "MTN" | "TELECEL" | "AIRTELTIGO"
+  ): Debt {
     const newDebt: Debt = {
       id: `debt-${Date.now()}`,
       branchId,
       customerName,
       customerNumber,
       amount,
+      commission: commission || 0,
+      paymentMode: paymentMode || "PHYSICAL_CASH",
+      paymentNetwork: paymentMode === "ELECTRONIC_MONEY" ? paymentNetwork : undefined,
       reason,
       dueDate,
       recordedByUserName: userName,
-      status: "OUTSTANDING"
+      status: "OUTSTANDING",
+      createdAt: new Date().toISOString()
     };
 
+    // If disbursed via Electronic Money, deduct from float balance of selected network
+    if (paymentMode === "ELECTRONIC_MONEY" && paymentNetwork) {
+      const fl = this.getFloatByBranch(branchId);
+      if (paymentNetwork === "MTN") {
+        fl.mtnFloat = Math.max(0, Number((fl.mtnFloat - amount).toFixed(2)));
+      } else if (paymentNetwork === "TELECEL") {
+        fl.telecelFloat = Math.max(0, Number((fl.telecelFloat - amount).toFixed(2)));
+      } else if (paymentNetwork === "AIRTELTIGO") {
+        fl.airtelTigoFloat = Math.max(0, Number((fl.airtelTigoFloat - amount).toFixed(2)));
+      }
+    }
+
     this.data.debts.push(newDebt);
-    this.logAction(userId, userName, "Debt Added", undefined, `Debt of GHS ${amount} added for ${customerName}, due by ${dueDate}`);
+    const netLabel = paymentNetwork ? ` (${paymentNetwork})` : "";
+    const modeLabel = paymentMode === "ELECTRONIC_MONEY" ? `Electronic Money${netLabel}` : "Physical Cash";
+    this.logAction(userId, userName, "Debt Added", undefined, `Debt of GHS ${amount} [${modeLabel}] (Comm: GHS ${commission || 0}) added for ${customerName}, due by ${dueDate}`);
     this.save();
     return newDebt;
   }
 
-  markDebtPaid(adminId: string, adminName: string, debtId: string): Debt {
+  markDebtPaid(
+    adminId: string, 
+    adminName: string, 
+    debtId: string, 
+    clearedPaymentMode: "PHYSICAL_CASH" | "ELECTRONIC_MONEY" = "PHYSICAL_CASH",
+    clearedPaymentNetwork?: "MTN" | "TELECEL" | "AIRTELTIGO"
+  ): Debt {
     const debtIndex = this.data.debts.findIndex(d => d.id === debtId);
     if (debtIndex === -1) {
       throw new Error("Debt record not found");
@@ -1383,26 +1983,110 @@ class JSONDatabase {
     if (debt.status === "PAID") {
       throw new Error("Debt is already paid");
     }
+    if (debt.status === "CANCELLED") {
+      throw new Error("Debt is already cancelled");
+    }
 
     debt.status = "PAID";
     debt.clearedAt = new Date().toISOString();
     debt.clearedByUserName = adminName;
+    debt.clearedPaymentMode = clearedPaymentMode;
+    if (clearedPaymentMode === "ELECTRONIC_MONEY" && clearedPaymentNetwork) {
+      debt.clearedPaymentNetwork = clearedPaymentNetwork;
+      
+      // Credit electronic float wallet for the selected network
+      const fl = this.getFloatByBranch(debt.branchId);
+      if (clearedPaymentNetwork === "MTN") {
+        fl.mtnFloat = Number((fl.mtnFloat + debt.amount).toFixed(2));
+      } else if (clearedPaymentNetwork === "TELECEL") {
+        fl.telecelFloat = Number((fl.telecelFloat + debt.amount).toFixed(2));
+      } else if (clearedPaymentNetwork === "AIRTELTIGO") {
+        fl.airtelTigoFloat = Number((fl.airtelTigoFloat + debt.amount).toFixed(2));
+      }
+    }
 
-    // Debt repays. In a real-world system, this injects cash back into current branch balance
-    this.logAction(adminId, adminName, "Debt Paid", `GHS ${debt.amount} Outstanding`, `Marked paid by Admin. Recorded customer name: ${debt.customerName}`);
+    const netStr = (clearedPaymentMode === "ELECTRONIC_MONEY" && clearedPaymentNetwork) ? ` (${clearedPaymentNetwork})` : "";
+    const clearModeStr = ` via ${clearedPaymentMode === "ELECTRONIC_MONEY" ? "Electronic Money" + netStr : "Physical Cash"}`;
+    this.logAction(adminId, adminName, "Debt Paid", `GHS ${debt.amount} Outstanding`, `Marked paid by ${adminName}${clearModeStr}. Recorded customer name: ${debt.customerName}`);
+    this.save();
+    return debt;
+  }
+
+  cancelDebt(
+    adminId: string, 
+    adminName: string, 
+    debtId: string, 
+    cancellationMode: "PHYSICAL_CASH" | "ELECTRONIC_MONEY" = "PHYSICAL_CASH",
+    cancellationNetwork?: "MTN" | "TELECEL" | "AIRTELTIGO",
+    cancellationReason?: string
+  ): Debt {
+    const debtIndex = this.data.debts.findIndex(d => d.id === debtId);
+    if (debtIndex === -1) {
+      throw new Error("Debt record not found");
+    }
+
+    const debt = this.data.debts[debtIndex];
+    if (debt.status === "PAID") {
+      throw new Error("Cannot cancel a debt that is already marked paid");
+    }
+    if (debt.status === "CANCELLED") {
+      throw new Error("Debt is already cancelled");
+    }
+
+    debt.status = "CANCELLED";
+    debt.clearedAt = new Date().toISOString();
+    debt.clearedByUserName = adminName;
+    debt.clearedPaymentMode = cancellationMode;
+    
+    // If debt cancellation involves electronic float reversal/repayment, restore float to selected network
+    if (cancellationMode === "ELECTRONIC_MONEY" && cancellationNetwork) {
+      debt.clearedPaymentNetwork = cancellationNetwork;
+      const fl = this.getFloatByBranch(debt.branchId);
+      if (cancellationNetwork === "MTN") {
+        fl.mtnFloat = Number((fl.mtnFloat + debt.amount).toFixed(2));
+      } else if (cancellationNetwork === "TELECEL") {
+        fl.telecelFloat = Number((fl.telecelFloat + debt.amount).toFixed(2));
+      } else if (cancellationNetwork === "AIRTELTIGO") {
+        fl.airtelTigoFloat = Number((fl.airtelTigoFloat + debt.amount).toFixed(2));
+      }
+    } else if (debt.paymentMode === "ELECTRONIC_MONEY" && debt.paymentNetwork) {
+      // Reversal of original electronic debt issuance: add float back to original network
+      const fl = this.getFloatByBranch(debt.branchId);
+      if (debt.paymentNetwork === "MTN") {
+        fl.mtnFloat = Number((fl.mtnFloat + debt.amount).toFixed(2));
+      } else if (debt.paymentNetwork === "TELECEL") {
+        fl.telecelFloat = Number((fl.telecelFloat + debt.amount).toFixed(2));
+      } else if (debt.paymentNetwork === "AIRTELTIGO") {
+        fl.airtelTigoFloat = Number((fl.airtelTigoFloat + debt.amount).toFixed(2));
+      }
+    }
+
+    const netStr = cancellationNetwork ? ` (${cancellationNetwork})` : "";
+    const cancelModeStr = ` via ${cancellationMode === "ELECTRONIC_MONEY" ? "Electronic Money" + netStr : "Physical Cash"}`;
+    this.logAction(adminId, adminName, "Debt Cancelled", `GHS ${debt.amount} Cancelled`, `Cancelled by ${adminName}${cancelModeStr}. Reason: ${cancellationReason || "N/A"}`);
     this.save();
     return debt;
   }
 
   // --- DASHBOARD ANALYTICS ---
-  getDashboardStats(branchId: string = "all"): DashboardStats {
+  getDashboardStats(branchId: string = "all", userId?: string, role?: string): DashboardStats {
     this.cleanOldPaidDebts();
     const today = new Date().toISOString().split("T")[0];
     
     // Filter transactions
     let filteredTxs = this.data.transactions.filter(t => t.status === "ACTIVE");
-    if (branchId && branchId !== "all") {
-      filteredTxs = filteredTxs.filter(t => t.branchId === branchId);
+    
+    if (role !== "ADMIN" && userId) {
+      const activeShift = this.getActiveShift(userId);
+      if (activeShift) {
+        filteredTxs = filteredTxs.filter(t => t.shiftId === activeShift.id);
+      } else {
+        filteredTxs = [];
+      }
+    } else {
+      if (branchId && branchId !== "all") {
+        filteredTxs = filteredTxs.filter(t => t.branchId === branchId);
+      }
     }
 
     const todayTxs = filteredTxs.filter(t => t.recordedAt.startsWith(today));
@@ -1481,15 +2165,78 @@ class JSONDatabase {
         cumulativeBProfit += (t.commission || 0);
       });
 
+      // Branch debts entered at branch
+      const bDebts = this.data.debts
+        .filter(d => d.status === "OUTSTANDING" && d.branchId === branch.id)
+        .reduce((sum, d) => sum + d.amount, 0);
+
+      // Branch floats
+      const bFloat = this.data.floats.find(f => f.branchId === branch.id);
+      const bMtnFloat = bFloat ? bFloat.mtnFloat : 0;
+      const bTelecelFloat = bFloat ? bFloat.telecelFloat : 0;
+      const bAirtelTigoFloat = bFloat ? bFloat.airtelTigoFloat : 0;
+      const bMtnAirtime = bFloat ? (bFloat.mtnAirtimeFloat || 0) : 0;
+      const bTelecelAirtime = bFloat ? (bFloat.telecelAirtimeFloat || 0) : 0;
+      const bAirtelTigoAirtime = bFloat ? (bFloat.airtelTigoAirtimeFloat || 0) : 0;
+      const bTotalFloats = bMtnFloat + bTelecelFloat + bAirtelTigoFloat;
+
+      // Branch available physical cash
+      const bOpenShifts = this.data.shifts.filter(s => s.status === "OPEN" && s.branchId === branch.id);
+      let bCash = 0;
+      if (bOpenShifts.length > 0) {
+        bOpenShifts.forEach(s => {
+          bCash += this.computeActiveShiftExpectedCash(s.id, s.userName);
+        });
+      } else {
+        const bClosedShifts = this.data.shifts.filter(s => s.status === "CLOSED" && s.branchId === branch.id);
+        if (bClosedShifts.length > 0) {
+          bCash = bClosedShifts[0].actualCash || 0;
+        }
+      }
+
+      const bWorkingCapital = bDebts + bTotalFloats + bCash;
+
       return {
         branchId: branch.id,
         branchName: branch.name,
         location: branch.location || "N/A",
         todayProfit: Number(todayBProfit.toFixed(2)),
         cumulativeProfit: Number(cumulativeBProfit.toFixed(2)),
-        transactionCount: branchAllTxs.length
+        transactionCount: branchAllTxs.length,
+        todayTxCount: branchTodayTxs.length,
+        workingCapital: Number(bWorkingCapital.toFixed(2)),
+        outstandingDebts: Number(bDebts.toFixed(2)),
+        totalFloats: Number(bTotalFloats.toFixed(2)),
+        cashBalance: Number(bCash.toFixed(2)),
+        mtnFloat: Number(bMtnFloat.toFixed(2)),
+        telecelFloat: Number(bTelecelFloat.toFixed(2)),
+        airtelTigoFloat: Number(bAirtelTigoFloat.toFixed(2)),
+        mtnAirtimeFloat: Number(bMtnAirtime.toFixed(2)),
+        telecelAirtimeFloat: Number(bTelecelAirtime.toFixed(2)),
+        airtelTigoAirtimeFloat: Number(bAirtelTigoAirtime.toFixed(2))
       };
     });
+
+    const externalCaps = this.data.externalCapitals || [];
+    let filteredCapitals = externalCaps;
+    if (branchId && branchId !== "all") {
+      filteredCapitals = filteredCapitals.filter(e => e.branchId === branchId || e.branchId === "all");
+    }
+
+    const totalExternalCapital = filteredCapitals.reduce((sum, e) => sum + e.amount, 0);
+    const externalElectronicCapital = filteredCapitals
+      .filter(e => e.type === "ELECTRONIC" && e.status === "ACTIVE")
+      .reduce((sum, e) => sum + e.remainingAmount, 0);
+    const externalPhysicalCapital = filteredCapitals
+      .filter(e => e.type === "PHYSICAL" && e.status === "ACTIVE")
+      .reduce((sum, e) => sum + e.remainingAmount, 0);
+    const tappedExternalCapital = filteredCapitals.reduce((sum, e) => sum + e.tappedAmount, 0);
+    const remainingExternalCapital = filteredCapitals
+      .filter(e => e.status === "ACTIVE")
+      .reduce((sum, e) => sum + e.remainingAmount, 0);
+
+    const totalWorkingCapital = Number((outstandingDebts + (currentMtnFloat + currentTelecelFloat + currentAirtelTigoFloat) + currentCashBalance).toFixed(2));
+    const combinedTotalCapital = Number((totalWorkingCapital + remainingExternalCapital).toFixed(2));
 
     return {
       todayProfit: Number(todayProfit.toFixed(2)),
@@ -1503,6 +2250,14 @@ class JSONDatabase {
       currentMtnFloat,
       currentTelecelFloat,
       currentAirtelTigoFloat,
+      totalWorkingCapital,
+      combinedTotalCapital,
+      totalExternalCapital: Number(totalExternalCapital.toFixed(2)),
+      externalElectronicCapital: Number(externalElectronicCapital.toFixed(2)),
+      externalPhysicalCapital: Number(externalPhysicalCapital.toFixed(2)),
+      tappedExternalCapital: Number(tappedExternalCapital.toFixed(2)),
+      remainingExternalCapital: Number(remainingExternalCapital.toFixed(2)),
+      externalCapitals: filteredCapitals,
       branchNetProfits
     };
   }

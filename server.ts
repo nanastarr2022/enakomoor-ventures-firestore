@@ -51,6 +51,18 @@ async function startServer() {
     if (!db.validateSession(user.id, user.sessionToken)) {
       return res.status(401).json({ error: "SESSION_INVALIDATED", message: "Your account was logged in on another device. Please log in again." });
     }
+
+    // Security check: Agent / Worker operating hours restriction (6:00 AM to 11:00 PM)
+    if (user.role !== "ADMIN") {
+      const currentHour = new Date().getHours();
+      if (currentHour < 6 || currentHour >= 23) {
+        return res.status(403).json({
+          error: "SYSTEM_CLOSED",
+          message: "System Security Lockdown: The system automatically closes at 11:00 PM daily. Agent operating hours are 6:00 AM to 11:00 PM."
+        });
+      }
+    }
+
     (req as any).user = user;
     next();
   };
@@ -83,6 +95,18 @@ async function startServer() {
     }
 
     const { user, branch, sessionToken } = authResult;
+
+    // Security check: Agent / Worker operating hours restriction (6:00 AM to 11:00 PM)
+    if (user.role !== "ADMIN") {
+      const currentHour = new Date().getHours();
+      if (currentHour < 6 || currentHour >= 23) {
+        return res.status(403).json({
+          error: "SYSTEM_CLOSED",
+          message: "Security Policy: Agents can only log in between 6:00 AM and 11:00 PM daily. System is currently closed."
+        });
+      }
+    }
+
     // Formulate a secure self-describing Bearer token using selected active branchId for this session
     const token = `${user.id}:${user.username}:${user.role}:${user.branchId}:${encodeURIComponent(user.name)}:${sessionToken}`;
     
@@ -309,14 +333,28 @@ app.post("/api/auth/reset-password", (req, res) => {
 
   app.post("/api/shifts/close", requireAuth, (req, res) => {
     const user = (req as any).user;
-    const { shiftId, actualCashCounted } = req.body;
+    const { shiftId, actualCashCounted, actualFloatMtn, actualFloatTelecel, actualFloatAirtelTigo } = req.body;
 
-    if (!shiftId || actualCashCounted === undefined) {
-      return res.status(400).json({ error: "Active shift ID and actual cash drawer counts are required" });
+    if (
+      !shiftId || 
+      actualCashCounted === undefined || 
+      actualFloatMtn === undefined || 
+      actualFloatTelecel === undefined || 
+      actualFloatAirtelTigo === undefined
+    ) {
+      return res.status(400).json({ error: "Active shift ID and all closing figures (Cash, MTN Float, Telecel Float, AirtelTigo Float) are required to close shift" });
     }
 
     try {
-      const shift = db.closeShift(user.id, user.name, shiftId, Number(actualCashCounted));
+      const shift = db.closeShift(
+        user.id, 
+        user.name, 
+        shiftId, 
+        Number(actualCashCounted),
+        Number(actualFloatMtn),
+        Number(actualFloatTelecel),
+        Number(actualFloatAirtelTigo)
+      );
       res.json(shift);
     } catch (e: any) {
       res.status(400).json({ error: e.message });
@@ -327,6 +365,66 @@ app.post("/api/auth/reset-password", (req, res) => {
     const { branchId } = req.query;
     const reports = db.getPermanentlySavedClosingReports(branchId as string || "all");
     res.json(reports);
+  });
+
+  // External Capital Management
+  app.get("/api/external-capital", requireAuth, (req, res) => {
+    const { branchId } = req.query;
+    res.json(db.getExternalCapitals(branchId as string));
+  });
+
+  app.post("/api/external-capital", requireAuth, (req, res) => {
+    const user = (req as any).user;
+    const { branchId, type, network, sourceName, amount, notes, shiftId, directInject } = req.body;
+
+    if (!type || !sourceName || amount === undefined) {
+      return res.status(400).json({ error: "Medium type, source name, and amount are required" });
+    }
+
+    try {
+      const cap = db.createExternalCapital(user.id, user.name, {
+        branchId: branchId || user.branchId,
+        type,
+        network,
+        sourceName,
+        amount: Number(amount),
+        notes,
+        shiftId,
+        directInject: directInject !== false
+      });
+      res.status(201).json(cap);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/external-capital/:id/tap", requireAuth, (req, res) => {
+    const user = (req as any).user;
+    const { id } = req.params;
+    const { tapAmount, reason } = req.body;
+
+    if (!tapAmount || Number(tapAmount) <= 0) {
+      return res.status(400).json({ error: "A positive tap amount is required" });
+    }
+
+    try {
+      const record = db.tapExternalCapital(user.id, user.name, id, Number(tapAmount), reason);
+      res.json(record);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/external-capital/:id/return", requireAuth, (req, res) => {
+    const user = (req as any).user;
+    const { id } = req.params;
+
+    try {
+      const record = db.returnExternalCapital(user.id, user.name, id);
+      res.json(record);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
   });
 
   // Notifications
@@ -458,6 +556,33 @@ app.post("/api/auth/reset-password", (req, res) => {
     }
   });
 
+  app.put("/api/transactions/:id/correct", requireAdmin, (req, res) => {
+    const user = (req as any).user;
+    const { id } = req.params;
+    const { amount, type, network, customerNumber, senderNumber, receiverNumber, commission, status, reason } = req.body;
+
+    if (!reason) {
+      return res.status(400).json({ error: "A correction reason is required for full audit logging" });
+    }
+
+    try {
+      const tx = db.correctTransaction(user.id, user.name, id, {
+        amount: amount !== undefined ? Number(amount) : undefined,
+        type,
+        network,
+        customerNumber,
+        senderNumber,
+        receiverNumber,
+        commission: commission !== undefined ? Number(commission) : undefined,
+        status,
+        reason
+      });
+      res.json(tx);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
   // Debts
   app.get("/api/debts", requireAuth, (req, res) => {
     const user = (req as any).user;
@@ -480,16 +605,17 @@ app.post("/api/auth/reset-password", (req, res) => {
 
   app.post("/api/debts", requireAuth, (req, res) => {
     const user = (req as any).user;
-    const { customerName, customerNumber, amount, reason, dueDate, branchId } = req.body;
+    const { customerName, customerNumber, amount, commission, paymentMode, paymentNetwork, reason, dueDate, branchId } = req.body;
 
     if (!customerName || !customerNumber || !amount || !reason || !dueDate) {
       return res.status(400).json({ error: "All debt field entities are required" });
     }
 
+    if (paymentMode === "ELECTRONIC_MONEY" && !paymentNetwork) {
+      return res.status(400).json({ error: "Please select the mobile money network (MTN, Telecel, or AirtelTigo) for electronic debt disbursement" });
+    }
+
     // Determine the branch from where the entry was made:
-    // 1. Explicitly passed branchId from UI (active branch selector)
-    // 2. Active open shift branch for the worker
-    // 3. Fallback to default user branchId
     let targetBranchId = branchId;
     if (!targetBranchId) {
       const activeShift = db.getActiveShift(user.id);
@@ -505,7 +631,10 @@ app.post("/api/auth/reset-password", (req, res) => {
         customerNumber, 
         Number(amount), 
         reason, 
-        dueDate
+        dueDate,
+        commission !== undefined ? Number(commission) : 0,
+        paymentMode || "PHYSICAL_CASH",
+        paymentNetwork
       );
       res.status(201).json(debt);
     } catch (e: any) {
@@ -516,9 +645,31 @@ app.post("/api/auth/reset-password", (req, res) => {
   app.post("/api/debts/:id/clear", requireAuth, (req, res) => {
     const user = (req as any).user;
     const { id } = req.params;
+    const { clearedPaymentMode, clearedPaymentNetwork } = req.body || {};
+
+    if (clearedPaymentMode === "ELECTRONIC_MONEY" && !clearedPaymentNetwork) {
+      return res.status(400).json({ error: "Please select which network (MTN, Telecel, or AirtelTigo) received the electronic repayment" });
+    }
 
     try {
-      const debt = db.markDebtPaid(user.id, user.name, id);
+      const debt = db.markDebtPaid(user.id, user.name, id, clearedPaymentMode, clearedPaymentNetwork);
+      res.json(debt);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/debts/:id/cancel", requireAuth, (req, res) => {
+    const user = (req as any).user;
+    const { id } = req.params;
+    const { cancellationMode, cancellationNetwork, cancellationReason } = req.body || {};
+
+    if (cancellationMode === "ELECTRONIC_MONEY" && !cancellationNetwork) {
+      return res.status(400).json({ error: "Please select which network (MTN, Telecel, or AirtelTigo) was used for cancellation/reversal" });
+    }
+
+    try {
+      const debt = db.cancelDebt(user.id, user.name, id, cancellationMode, cancellationNetwork, cancellationReason);
       res.json(debt);
     } catch (e: any) {
       res.status(400).json({ error: e.message });
@@ -551,8 +702,9 @@ app.post("/api/auth/reset-password", (req, res) => {
 
   // Stats / Dashboard Reports
   app.get("/api/stats/dashboard", requireAuth, (req, res) => {
+    const user = (req as any).user;
     const { branchId } = req.query;
-    res.json(db.getDashboardStats(branchId as string || "all"));
+    res.json(db.getDashboardStats(branchId as string || "all", user?.id, user?.role));
   });
 
   app.get("/api/stats/charts", requireAuth, (req, res) => {
@@ -578,6 +730,20 @@ app.post("/api/auth/reset-password", (req, res) => {
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
+  });
+
+  // Ensure any unhandled /api/* request returns a clean JSON 404 response instead of falling through to Vite/index.html SPA fallback
+  app.all("/api/*", (req, res) => {
+    res.status(404).json({ error: `API endpoint not found: ${req.method} ${req.path}` });
+  });
+
+  // Global Error Handler for API routes to guarantee JSON error output
+  app.use((err: any, req: Request, res: Response, next: NextFunction) => {
+    console.error("[API Error]", err);
+    if (res.headersSent) {
+      return next(err);
+    }
+    res.status(err.status || 500).json({ error: err.message || "Internal Server Error" });
   });
 
   // --- VITE MIDDLEWARE INTEGRATION ---

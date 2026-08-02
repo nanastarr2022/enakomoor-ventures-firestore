@@ -5,7 +5,19 @@ import { Transaction } from "../types";
 import dotenv from "dotenv";
 dotenv.config();
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+let resendClient: Resend | null = null;
+function getResend(): Resend | null {
+  if (!process.env.RESEND_API_KEY) return null;
+  if (!resendClient) {
+    try {
+      resendClient = new Resend(process.env.RESEND_API_KEY);
+    } catch (err) {
+      console.warn("⚠️ Could not initialize Resend client:", err);
+      return null;
+    }
+  }
+  return resendClient;
+}
 
 // Use Resend's default test sender until you verify your own domain in Resend.
 // Once you verify "enakomoorventures.com" (or similar) in Resend's dashboard,
@@ -17,7 +29,8 @@ const FROM_ADDRESS = process.env.RESEND_FROM || "Security Alerts <onboarding@res
  * when an operational transaction (deposit, withdrawal, send money, or airtime) exceeds 5,000 GHS.
  */
 export async function sendHighValueAlert(tx: Transaction, branchName: string): Promise<boolean> {
-  if (!process.env.RESEND_API_KEY) {
+  const client = getResend();
+  if (!client) {
     console.log("ℹ️ RESEND_API_KEY not configured in environment. Skipping high-value alert email.");
     return false;
   }
@@ -220,7 +233,7 @@ Automated transmission from MoMo Business Platform to enakomoorventures@gmail.co
   `.trim();
 
   try {
-    const { data, error } = await resend.emails.send({
+    const { data, error } = await client.emails.send({
       from: FROM_ADDRESS,
       to: "nanastarr2022@gmail.com",
       subject,
@@ -241,7 +254,8 @@ Automated transmission from MoMo Business Platform to enakomoorventures@gmail.co
   }
 }
   export async function sendPasswordResetEmail(username: string, role: string, code: string): Promise<boolean> {
-  if (!process.env.RESEND_API_KEY) {
+  const client = getResend();
+  if (!client) {
     console.log("ℹ️ RESEND_API_KEY not configured. Skipping password reset email.");
     return false;
   }
@@ -266,7 +280,7 @@ Automated transmission from MoMo Business Platform to enakomoorventures@gmail.co
   `;
 
   try {
-    const { data, error } = await resend.emails.send({
+    const { data, error } = await client.emails.send({
       from: FROM_ADDRESS,
       to: "nanastarr2022@gmail.com",
       subject,
@@ -387,7 +401,8 @@ export async function sendApprovalAlert(tx: Transaction, branchName: string, set
     return true;
   }
 
-  if (!process.env.RESEND_API_KEY) {
+  const client = getResend();
+  if (!client) {
     console.log("ℹ️ RESEND_API_KEY not configured in environment. Skipping approval alert email.");
     return false;
   }
@@ -434,7 +449,7 @@ export async function sendApprovalAlert(tx: Transaction, branchName: string, set
   `;
 
   try {
-    const { data, error } = await resend.emails.send({
+    const { data, error } = await client.emails.send({
       from: FROM_ADDRESS,
       to: recipients,
       subject,
@@ -470,7 +485,8 @@ export async function sendEscalationAlert(tx: Transaction, branchName: string, s
     return true;
   }
 
-  if (!process.env.RESEND_API_KEY) {
+  const client = getResend();
+  if (!client) {
     console.log("ℹ️ RESEND_API_KEY not configured in environment. Skipping escalation alert email.");
     return false;
   }
@@ -502,7 +518,7 @@ export async function sendEscalationAlert(tx: Transaction, branchName: string, s
   `;
 
   try {
-    const { data, error } = await resend.emails.send({
+    const { data, error } = await client.emails.send({
       from: FROM_ADDRESS,
       to: recipients,
       subject,

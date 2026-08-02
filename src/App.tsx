@@ -40,19 +40,28 @@ import {
   X,
   Volume2,
   VolumeX,
-  Coins
+  Coins,
+  Landmark,
+  Clock,
+  Briefcase,
+  BookOpen,
+  Sliders
 } from "lucide-react";
 import { 
   User as UserType, 
   Branch, 
   Shift, 
   Transaction, 
+  TransactionType,
+  NetworkType,
   CommissionRule, 
   Debt, 
   FloatBalance, 
   AuditLog, 
   DashboardStats,
-  Notification
+  Notification,
+  ExternalCapital,
+  ExternalCapitalMedium
 } from "./types";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -181,6 +190,24 @@ export default function App() {
   const [isBranchSearchOpen, setIsBranchSearchOpen] = useState(false);
   const [branchSearchQuery, setBranchSearchQuery] = useState("");
 
+  // State for searchable branch dropdown filter in Debt Ledger tab
+  const [debtBranchFilter, setDebtBranchFilter] = useState<string>("all");
+  const [isDebtBranchSearchOpen, setIsDebtBranchSearchOpen] = useState(false);
+  const [debtBranchSearchQuery, setDebtBranchSearchQuery] = useState("");
+
+  // State for Action Confirmation Modals (to prevent accidental errors)
+  const [isLogoutConfirmOpen, setIsLogoutConfirmOpen] = useState<boolean>(false);
+  const [debtToClear, setDebtToClear] = useState<Debt | null>(null);
+  const [isBulkClearConfirmOpen, setIsBulkClearConfirmOpen] = useState<boolean>(false);
+  const [pendingTxConfirmPayload, setPendingTxConfirmPayload] = useState<any | null>(null);
+  const [pendingDebtConfirmPayload, setPendingDebtConfirmPayload] = useState<any | null>(null);
+  const [pendingShiftClosePayload, setPendingShiftClosePayload] = useState<{
+    actualCash: number;
+    actualMtn: number;
+    actualTelecel: number;
+    actualAirtel: number;
+  } | null>(null);
+
   // Master Data State
   const [branches, setBranches] = useState<Branch[]>([]);
   const [stats, setStats] = useState<DashboardStats | null>(null);
@@ -207,6 +234,31 @@ export default function App() {
   const [approvalSettings, setApprovalSettings] = useState<any>(null);
   const [isUpdatingSettings, setIsUpdatingSettings] = useState<boolean>(false);
   const [isAlarmMuted, setIsAlarmMuted] = useState<boolean>(false);
+
+  const getDebtEntryTimestamp = (d: Debt): number => {
+    if (d.createdAt) {
+      const t = new Date(d.createdAt).getTime();
+      if (!isNaN(t)) return t;
+    }
+    if (d.id && d.id.startsWith("debt-")) {
+      const tStr = d.id.replace("debt-", "");
+      const parsed = parseInt(tStr, 10);
+      if (!isNaN(parsed) && parsed > 1000000000) return parsed;
+    }
+    if (d.dueDate) {
+      const t = new Date(d.dueDate).getTime();
+      if (!isNaN(t)) return t;
+    }
+    return 0;
+  };
+
+  const filteredDebts = useMemo(() => {
+    let list = debts;
+    if (debtBranchFilter !== "all") {
+      list = debts.filter(d => d.branchId === debtBranchFilter);
+    }
+    return [...list].sort((a, b) => getDebtEntryTimestamp(b) - getDebtEntryTimestamp(a));
+  }, [debts, debtBranchFilter]);
 
   const overdueDebtsCount = useMemo(() => {
     const today = new Date();
@@ -439,12 +491,28 @@ export default function App() {
   const [newDebtName, setNewDebtName] = useState("");
   const [newDebtNum, setNewDebtNum] = useState("");
   const [newDebtAmt, setNewDebtAmt] = useState("");
+  const [newDebtComm, setNewDebtComm] = useState("");
+  const [newDebtPaymentMode, setNewDebtPaymentMode] = useState<"PHYSICAL_CASH" | "ELECTRONIC_MONEY">("PHYSICAL_CASH");
+  const [newDebtPaymentNetwork, setNewDebtPaymentNetwork] = useState<"MTN" | "TELECEL" | "AIRTELTIGO">("MTN");
   const [newDebtReason, setNewDebtReason] = useState("");
   const [newDebtDue, setNewDebtDue] = useState("");
   const [debtMsg, setDebtMsg] = useState("");
 
+  const [debtClearPaymentMode, setDebtClearPaymentMode] = useState<"PHYSICAL_CASH" | "ELECTRONIC_MONEY">("PHYSICAL_CASH");
+  const [debtClearPaymentNetwork, setDebtClearPaymentNetwork] = useState<"MTN" | "TELECEL" | "AIRTELTIGO">("MTN");
+
+  const [debtToCancel, setDebtToCancel] = useState<Debt | null>(null);
+  const [debtCancelMode, setDebtCancelMode] = useState<"PHYSICAL_CASH" | "ELECTRONIC_MONEY">("PHYSICAL_CASH");
+  const [debtCancelNetwork, setDebtCancelNetwork] = useState<"MTN" | "TELECEL" | "AIRTELTIGO">("MTN");
+  const [debtCancelReason, setDebtCancelReason] = useState<string>("");
+
   const [actualCash, setActualCash] = useState("");
+  const [actualMtn, setActualMtn] = useState("");
+  const [actualTelecel, setActualTelecel] = useState("");
+  const [actualAirtel, setActualAirtel] = useState("");
   const [closingSuccess, setClosingSuccess] = useState<Shift | null>(null);
+  const [isShiftReportDialogueOpen, setIsShiftReportDialogueOpen] = useState(false);
+  const [selectedReportForPrint, setSelectedReportForPrint] = useState<Shift | null>(null);
 
   // Admin forms
   const [newBranchName, setNewBranchName] = useState("");
@@ -468,15 +536,110 @@ export default function App() {
   const [customFloats, setCustomFloats] = useState<Record<string, { mtn: string; tel: string; art: string }>>({});
   const [customAirtimeFloats, setCustomAirtimeFloats] = useState<Record<string, { mtn: string; tel: string; art: string }>>({});
 
+  // External Capital Management states
+  const [isExtCapModalOpen, setIsExtCapModalOpen] = useState(false);
+  const [extCapType, setExtCapType] = useState<ExternalCapitalMedium>("ELECTRONIC");
+  const [extCapNetwork, setExtCapNetwork] = useState<NetworkType>("MTN");
+  const [extCapSourceName, setExtCapSourceName] = useState("");
+  const [extCapAmount, setExtCapAmount] = useState("");
+  const [extCapNotes, setExtCapNotes] = useState("");
+  const [extCapBranchId, setExtCapBranchId] = useState("");
+  const [extCapDirectInject, setExtCapDirectInject] = useState(true);
+  const [extCapError, setExtCapError] = useState("");
+  const [extCapSuccess, setExtCapSuccess] = useState("");
+  const [isSubmittingExtCap, setIsSubmittingExtCap] = useState(false);
+  const [extCapList, setExtCapList] = useState<ExternalCapital[]>([]);
+  const [manualTapId, setManualTapId] = useState<string | null>(null);
+  const [manualTapAmount, setManualTapAmount] = useState("");
+  const [manualTapReason, setManualTapReason] = useState("");
+
   // Search/Filters
   const [phoneSearch, setPhoneSearch] = useState("");
+  const [txCategoryFilter, setTxCategoryFilter] = useState<"ALL" | "MOMO" | "AIRTIME">("ALL");
+  const [formCategory, setFormCategory] = useState<"MOMO" | "AIRTIME">("MOMO");
   const [reportsRange, setReportsRange] = useState<"daily" | "weekly" | "monthly">("daily");
   const [reportRows, setReportRows] = useState<any[]>([]);
 
   // Correction flow states
   const [selectedTxForCorrection, setSelectedTxForCorrection] = useState<Transaction | null>(null);
+  const [editTxType, setEditTxType] = useState<TransactionType>("deposit");
+  const [editTxNetwork, setEditTxNetwork] = useState<NetworkType>("MTN");
+  const [editTxAmount, setEditTxAmount] = useState("");
+  const [editTxCommission, setEditTxCommission] = useState("");
+  const [editTxCustomerNumber, setEditTxCustomerNumber] = useState("");
+  const [editTxSenderNumber, setEditTxSenderNumber] = useState("");
+  const [editTxReceiverNumber, setEditTxReceiverNumber] = useState("");
+  const [editTxStatus, setEditTxStatus] = useState<"ACTIVE" | "REVERSED" | "PENDING_APPROVAL" | "REJECTED">("ACTIVE");
   const [correctionReason, setCorrectionReason] = useState("");
   const [correctionError, setCorrectionError] = useState("");
+  const [correctionSuccessMsg, setCorrectionSuccessMsg] = useState("");
+  const [isSubmittingCorrection, setIsSubmittingCorrection] = useState(false);
+
+  const openCorrectionModal = (tx: Transaction) => {
+    setSelectedTxForCorrection(tx);
+    setEditTxType(tx.type);
+    setEditTxNetwork(tx.network || "MTN");
+    setEditTxAmount((tx.amount || 0).toString());
+    setEditTxCommission((tx.commission || 0).toString());
+    setEditTxCustomerNumber(tx.customerNumber || "");
+    setEditTxSenderNumber(tx.senderNumber || "");
+    setEditTxReceiverNumber(tx.receiverNumber || "");
+    setEditTxStatus(tx.status);
+    setCorrectionReason("");
+    setCorrectionError("");
+    setCorrectionSuccessMsg("");
+  };
+
+  const handleExecuteCorrection = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedTxForCorrection) return;
+    if (!correctionReason.trim()) {
+      setCorrectionError("Please enter a detailed reason for correcting this transaction.");
+      return;
+    }
+
+    setIsSubmittingCorrection(true);
+    setCorrectionError("");
+    setCorrectionSuccessMsg("");
+
+    try {
+      const res = await fetch(`/api/transactions/${selectedTxForCorrection.id}/correct`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          amount: Number(editTxAmount),
+          type: editTxType,
+          network: editTxNetwork,
+          customerNumber: editTxCustomerNumber,
+          senderNumber: editTxSenderNumber,
+          receiverNumber: editTxReceiverNumber,
+          commission: Number(editTxCommission),
+          status: editTxStatus,
+          reason: correctionReason.trim()
+        })
+      });
+
+      if (res.ok) {
+        setCorrectionSuccessMsg("❇️ Transaction corrected! All branch floats, shift expected cash, and commission totals recalculated.");
+        setTimeout(() => {
+          setSelectedTxForCorrection(null);
+          setCorrectionSuccessMsg("");
+          fetchMasterData();
+          checkActiveShift();
+        }, 1200);
+      } else {
+        const err = await res.json();
+        setCorrectionError(err.error || "Failed to correct transaction.");
+      }
+    } catch (err) {
+      setCorrectionError("Network error while submitting correction.");
+    } finally {
+      setIsSubmittingCorrection(false);
+    }
+  };
 
   // Print view or summary export
   const [isPrinting, setIsPrinting] = useState(false);
@@ -485,7 +648,13 @@ export default function App() {
   useEffect(() => {
     if (!token) {
       fetch("/api/public/branches")
-        .then(res => res.json())
+        .then(res => {
+          const contentType = res.headers.get("content-type");
+          if (res.ok && contentType && contentType.includes("application/json")) {
+            return res.json();
+          }
+          return [];
+        })
         .then(data => {
           if (Array.isArray(data)) {
             setPublicBranches(data);
@@ -513,6 +682,23 @@ export default function App() {
       return () => clearInterval(intervalId);
     }
   }, [token, selectedBranchId, activeTab]);
+
+  // Security operating hours monitor for Agents (6:00 AM to 11:00 PM auto-shutdown)
+  useEffect(() => {
+    if (!currentUser || currentUser.role === "ADMIN") return;
+
+    const checkAgentOperatingHours = () => {
+      const currentHour = new Date().getHours();
+      if (currentHour < 6 || currentHour >= 23) {
+        alert("🔒 SYSTEM SECURITY LOCKDOWN\n\nThe system automatically closes at 11:00 PM daily. Agent operating hours are 6:00 AM to 11:00 PM.\n\nYour session has been automatically logged out for security reasons.");
+        handleLogout();
+      }
+    };
+
+    checkAgentOperatingHours();
+    const intervalId = setInterval(checkAgentOperatingHours, 15000); // Check every 15 seconds
+    return () => clearInterval(intervalId);
+  }, [currentUser]);
 
   const fetchMasterData = async () => {
     try {
@@ -550,6 +736,12 @@ export default function App() {
       const debtRes = await fetch(`/api/debts?branchId=${selectedBranchId}`, { headers });
       if (debtRes.ok) {
         setDebts(await debtRes.json());
+      }
+
+      // Load External Capitals
+      const extRes = await fetch(`/api/external-capital?branchId=${selectedBranchId}`, { headers });
+      if (extRes.ok) {
+        setExtCapList(await extRes.json());
       }
 
       // Load Commissions Rules
@@ -614,6 +806,97 @@ export default function App() {
     }
   };
 
+  const handleAddExternalCapital = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setExtCapError("");
+    setExtCapSuccess("");
+
+    if (!extCapSourceName.trim() || !extCapAmount || Number(extCapAmount) <= 0) {
+      setExtCapError("Solicited Admin Source Name and a valid positive amount are required.");
+      return;
+    }
+
+    setIsSubmittingExtCap(true);
+    try {
+      const res = await fetch("/api/external-capital", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          branchId: extCapBranchId || (selectedBranchId !== "all" ? selectedBranchId : currentBranch?.id || "branch-a"),
+          type: extCapType,
+          network: extCapType === "ELECTRONIC" ? extCapNetwork : undefined,
+          sourceName: extCapSourceName.trim(),
+          amount: Number(extCapAmount),
+          notes: extCapNotes.trim(),
+          shiftId: activeShift?.id,
+          directInject: extCapDirectInject
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        setExtCapError(data.error || "Failed to inject external capital.");
+      } else {
+        setExtCapSuccess(`External capital of GHS ${Number(extCapAmount).toLocaleString()} (${extCapType}) injected successfully!`);
+        setExtCapSourceName("");
+        setExtCapAmount("");
+        setExtCapNotes("");
+        fetchMasterData();
+      }
+    } catch (err) {
+      setExtCapError("Network error submitting external capital.");
+    } finally {
+      setIsSubmittingExtCap(false);
+    }
+  };
+
+  const handleManualTapExtCap = async (id: string) => {
+    if (!manualTapAmount || Number(manualTapAmount) <= 0) {
+      alert("Please enter a valid positive tap amount.");
+      return;
+    }
+    try {
+      const res = await fetch(`/api/external-capital/${id}/tap`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          tapAmount: Number(manualTapAmount),
+          reason: manualTapReason || "Manual Float Stabilization"
+        })
+      });
+      if (res.ok) {
+        setManualTapId(null);
+        setManualTapAmount("");
+        setManualTapReason("");
+        fetchMasterData();
+      } else {
+        const err = await res.json();
+        alert(err.error || "Tap failed");
+      }
+    } catch (err) {
+      alert("Network error processing manual tap.");
+    }
+  };
+
+  const handleReturnExtCap = async (id: string) => {
+    if (!confirm("Are you sure you want to mark this external capital reserve as returned / settled?")) return;
+    try {
+      const res = await fetch(`/api/external-capital/${id}/return`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (res.ok) {
+        fetchMasterData();
+      }
+    } catch (err) {}
+  };
+
   const checkActiveShift = async () => {
     try {
       const headers = { "Authorization": `Bearer ${token}` };
@@ -634,6 +917,16 @@ export default function App() {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError("");
+
+    // Client-side security check for agent operating hours (6:00 AM to 11:00 PM)
+    if (username.trim().toLowerCase() !== "admin") {
+      const currentHour = new Date().getHours();
+      if (currentHour < 6 || currentHour >= 23) {
+        setLoginError("Security Policy: Agents are only permitted to log in between 6:00 AM and 11:00 PM. The system is currently closed.");
+        return;
+      }
+    }
+
     setIsLoggingIn(true);
 
     try {
@@ -775,47 +1068,31 @@ const handleResetPassword = async (e: React.FormEvent) => {
     }
 
     try {
-    const res = await fetch("/api/shifts/open", {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    "Authorization": `Bearer ${token}`
-  },
-  body: JSON.stringify({
-    openingCash: Number(openingCash),
-    openingFloatMtn: Number(openingMtn),
-    openingFloatTelecel: Number(openingTelecel),
-    openingFloatAirtelTigo: Number(openingAirtel),
-    branchId:
-      selectedBranchId !== "all"
-        ? selectedBranchId
-        : (currentBranch?.id || "branch-a")
-  })
-});
-
-if (res.status === 401) {
-  const errData = await res.json();
-
-  if (errData.error === "SESSION_INVALIDATED") {
-    handleSessionInvalidated();
-    return;
-  }
-}
-        if (branchRes.status === 401) {
-        const errData = await branchRes.json();
-        if (errData.error === "SESSION_INVALIDATED") {
-          handleSessionInvalidated();
-          return;
-        }
-      }
+      const res = await fetch("/api/shifts/open", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
         body: JSON.stringify({
           openingCash: Number(openingCash),
           openingFloatMtn: Number(openingMtn),
           openingFloatTelecel: Number(openingTelecel),
           openingFloatAirtelTigo: Number(openingAirtel),
-          branchId: selectedBranchId !== "all" ? selectedBranchId : (currentBranch?.id || "branch-a")
+          branchId:
+            selectedBranchId !== "all"
+              ? selectedBranchId
+              : (currentBranch?.id || "branch-a")
         })
       });
+
+      if (res.status === 401) {
+        const errData = await res.json();
+        if (errData.error === "SESSION_INVALIDATED") {
+          handleSessionInvalidated();
+          return;
+        }
+      }
 
       const data = await res.json();
       if (!res.ok) {
@@ -833,10 +1110,22 @@ if (res.status === 401) {
 
   const handleCloseShiftSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!actualCash) {
-      alert("Please enter the actual cash counted from the drawer.");
+    if (actualCash === "" || actualMtn === "" || actualTelecel === "" || actualAirtel === "") {
+      alert("Please enter all closing figures (Physical Cash, MTN float, Telecel float, and AirtelTigo float) before submitting.");
       return;
     }
+    setPendingShiftClosePayload({
+      actualCash: Number(actualCash),
+      actualMtn: Number(actualMtn),
+      actualTelecel: Number(actualTelecel),
+      actualAirtel: Number(actualAirtel)
+    });
+  };
+
+  const executeConfirmedShiftClose = async () => {
+    if (!pendingShiftClosePayload) return;
+    const payload = pendingShiftClosePayload;
+    setPendingShiftClosePayload(null);
 
     try {
       const res = await fetch("/api/shifts/close", {
@@ -847,7 +1136,10 @@ if (res.status === 401) {
         },
         body: JSON.stringify({
           shiftId: activeShift?.id,
-          actualCashCounted: Number(actualCash)
+          actualCashCounted: payload.actualCash,
+          actualFloatMtn: payload.actualMtn,
+          actualFloatTelecel: payload.actualTelecel,
+          actualFloatAirtelTigo: payload.actualAirtel
         })
       });
 
@@ -859,8 +1151,13 @@ if (res.status === 401) {
 
       const closedReport = await res.json();
       setClosingSuccess(closedReport);
+      setSelectedReportForPrint(closedReport);
+      setIsShiftReportDialogueOpen(true);
       setActiveShift(null);
       setActualCash("");
+      setActualMtn("");
+      setActualTelecel("");
+      setActualAirtel("");
       fetchMasterData();
     } catch (err) {
       alert("Error logging and storing closed report");
@@ -910,6 +1207,15 @@ if (res.status === 401) {
       payload.receiverNumber = customerNumber;
     }
 
+    // Trigger confirmation modal before executing
+    setPendingTxConfirmPayload(payload);
+  };
+
+  const executeConfirmedTransaction = async () => {
+    if (!pendingTxConfirmPayload) return;
+    const payload = pendingTxConfirmPayload;
+    setPendingTxConfirmPayload(null);
+
     try {
       const res = await fetch("/api/transactions", {
         method: "POST",
@@ -948,6 +1254,25 @@ if (res.status === 401) {
       return;
     }
 
+    // Trigger confirmation modal before executing
+    setPendingDebtConfirmPayload({
+      customerName: newDebtName,
+      customerNumber: newDebtNum,
+      amount: Number(newDebtAmt),
+      commission: newDebtComm ? Number(newDebtComm) : 0,
+      paymentMode: newDebtPaymentMode,
+      paymentNetwork: newDebtPaymentMode === "ELECTRONIC_MONEY" ? newDebtPaymentNetwork : undefined,
+      reason: newDebtReason,
+      dueDate: newDebtDue,
+      branchId: activeBranch?.id || currentBranch?.id || "branch-a"
+    });
+  };
+
+  const executeConfirmedAddDebt = async () => {
+    if (!pendingDebtConfirmPayload) return;
+    const payload = pendingDebtConfirmPayload;
+    setPendingDebtConfirmPayload(null);
+
     try {
       const res = await fetch("/api/debts", {
         method: "POST",
@@ -955,14 +1280,7 @@ if (res.status === 401) {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${token}`
         },
-        body: JSON.stringify({
-          customerName: newDebtName,
-          customerNumber: newDebtNum,
-          amount: Number(newDebtAmt),
-          reason: newDebtReason,
-          dueDate: newDebtDue,
-          branchId: activeBranch?.id || currentBranch?.id || "branch-a"
-        })
+        body: JSON.stringify(payload)
       });
 
       if (res.ok) {
@@ -970,6 +1288,9 @@ if (res.status === 401) {
         setNewDebtName("");
         setNewDebtNum("");
         setNewDebtAmt("");
+        setNewDebtComm("");
+        setNewDebtPaymentMode("PHYSICAL_CASH");
+        setNewDebtPaymentNetwork("MTN");
         setNewDebtReason("");
         setNewDebtDue("");
         fetchMasterData();
@@ -982,15 +1303,27 @@ if (res.status === 401) {
     }
   };
 
-  const handleClearDebt = async (debtId: string) => {
+  const handleClearDebt = async (
+    debtId: string, 
+    clearedPaymentMode?: "PHYSICAL_CASH" | "ELECTRONIC_MONEY",
+    clearedPaymentNetwork?: "MTN" | "TELECEL" | "AIRTELTIGO"
+  ) => {
     try {
       const res = await fetch(`/api/debts/${debtId}/clear`, {
         method: "POST",
-        headers: { "Authorization": `Bearer ${token}` }
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({ 
+          clearedPaymentMode,
+          clearedPaymentNetwork: clearedPaymentMode === "ELECTRONIC_MONEY" ? clearedPaymentNetwork : undefined
+        })
       });
 
       if (res.ok) {
         setDebtMsg("Debt payoff approved successfully.");
+        setDebtToClear(null);
         fetchMasterData();
       } else {
         const error = await res.json();
@@ -998,6 +1331,39 @@ if (res.status === 401) {
       }
     } catch (err) {
       setDebtMsg("Connection issue executing task");
+    }
+  };
+
+  const handleCancelDebt = async (
+    debtId: string,
+    cancellationMode: "PHYSICAL_CASH" | "ELECTRONIC_MONEY",
+    cancellationNetwork?: "MTN" | "TELECEL" | "AIRTELTIGO",
+    cancellationReason?: string
+  ) => {
+    try {
+      const res = await fetch(`/api/debts/${debtId}/cancel`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          cancellationMode,
+          cancellationNetwork: cancellationMode === "ELECTRONIC_MONEY" ? cancellationNetwork : undefined,
+          cancellationReason
+        })
+      });
+
+      if (res.ok) {
+        setDebtMsg("Debt cancellation recorded successfully.");
+        setDebtToCancel(null);
+        fetchMasterData();
+      } else {
+        const error = await res.json();
+        setDebtMsg(error.error || "Failed to cancel debt");
+      }
+    } catch (err) {
+      setDebtMsg("Connection issue cancelling debt");
     }
   };
 
@@ -1325,14 +1691,20 @@ if (res.status === 401) {
     return str;
   };
 
-  const handleExportTransactionsCSV = async () => {
+  const handleExportTransactionsCSV = async (category: "MOMO" | "AIRTIME" | "ALL" = "ALL") => {
     setIsExportingTxs(true);
     try {
       const headers = { "Authorization": `Bearer ${token}` };
       const res = await fetch("/api/transactions?branchId=all", { headers });
       if (!res.ok) throw new Error("Failed to fetch global transactions list.");
-      const allTxs: Transaction[] = await res.json();
+      let allTxs: Transaction[] = await res.json();
       
+      if (category === "MOMO") {
+        allTxs = allTxs.filter(t => t.type !== "airtime");
+      } else if (category === "AIRTIME") {
+        allTxs = allTxs.filter(t => t.type === "airtime");
+      }
+
       const csvHeaders = [
         "Transaction ID",
         "Timestamp (ISO)",
@@ -1379,7 +1751,12 @@ if (res.status === 401) {
       });
 
       const csvContent = [csvHeaders.join(","), ...csvRows].join("\n");
-      downloadCSVFile(csvContent, `historical_transactions_audit_${new Date().toISOString().slice(0, 10)}.csv`);
+      const filename = category === "MOMO"
+        ? `momo_transactions_audit_${new Date().toISOString().slice(0, 10)}.csv`
+        : category === "AIRTIME"
+        ? `airtime_transactions_audit_${new Date().toISOString().slice(0, 10)}.csv`
+        : `historical_transactions_audit_${new Date().toISOString().slice(0, 10)}.csv`;
+      downloadCSVFile(csvContent, filename);
     } catch (error: any) {
       alert("Error exporting transactions: " + error.message);
     } finally {
@@ -1639,8 +2016,11 @@ if (res.status === 401) {
     }, 500);
   };
 
-  // Filter transactions by phone search
+  // Filter transactions by phone search and category (MoMo vs Airtime)
   const filteredTxs = transactions.filter(t => {
+    if (txCategoryFilter === "MOMO" && t.type === "airtime") return false;
+    if (txCategoryFilter === "AIRTIME" && t.type !== "airtime") return false;
+
     if (!phoneSearch) return true;
     const query = phoneSearch.toLowerCase();
     return (
@@ -1756,6 +2136,17 @@ if (res.status === 401) {
           <div className="bg-white py-8 px-4 shadow-xl border border-neutral-200 rounded-2xl sm:px-10">
             {authView === "login" && (
             <form id="login_form" onSubmit={handleLogin} className="space-y-6">
+              {/* Agent Operating Hours Policy Badge */}
+              <div className="bg-blue-50 border border-blue-200/80 rounded-xl p-3 flex items-center justify-between text-xs text-blue-900 font-medium shadow-2xs">
+                <div className="flex items-center gap-2">
+                  <Clock className="size-4 text-blue-600 shrink-0" />
+                  <span>Agent Hours: <strong className="font-bold text-blue-950">6:00 AM – 11:00 PM</strong></span>
+                </div>
+                <span className="text-[10px] bg-blue-100/80 text-blue-800 px-2 py-0.5 rounded-md font-mono font-extrabold uppercase">
+                  Auto-Close 11PM
+                </span>
+              </div>
+
               {loginError && (
                 <div className="bg-red-50 border-l-4 border-red-500 p-4 text-sm text-red-700 flex items-start gap-2 rounded-r-lg">
                   <AlertTriangle className="size-5 shrink-0 text-red-600" />
@@ -2073,14 +2464,22 @@ if (res.status === 401) {
             </div>
 
             {/* Global Theme Toggle */}
-            <button
+            <motion.button
               id="global_theme_toggle_btn"
               onClick={() => setTheme(t => t.startsWith("light") ? "dark" : "light")}
-              className="text-white hover:text-yellow-300 p-1.5 hover:bg-blue-800 rounded-lg transition-all cursor-pointer flex items-center justify-center"
+              className="text-white hover:text-yellow-300 p-1.5 hover:bg-blue-800 rounded-lg transition-colors cursor-pointer flex items-center justify-center"
               title={theme.startsWith("light") ? "Switch to Dark Theme" : "Switch to Light Theme"}
+              whileTap={{ scale: 0.9 }}
+              whileHover={{ scale: 1.05 }}
             >
-              {theme.startsWith("light") ? <Moon className="size-5" /> : <Sun className="size-5" />}
-            </button>
+              <motion.div
+                animate={{ rotate: theme.startsWith("light") ? 0 : 180 }}
+                transition={{ duration: 0.4, ease: "easeInOut" }}
+                className="flex items-center justify-center"
+              >
+                {theme.startsWith("light") ? <Moon className="size-5" /> : <Sun className="size-5" />}
+              </motion.div>
+            </motion.button>
 
             {/* Manual Page Refresh */}
             <button
@@ -2092,8 +2491,8 @@ if (res.status === 401) {
             </button>
 
             <button
-              onClick={handleLogout}
-              className="text-white hover:text-red-300 p-1.5 hover:bg-blue-800 rounded-lg transition"
+              onClick={() => setIsLogoutConfirmOpen(true)}
+              className="text-white hover:text-red-300 p-1.5 hover:bg-blue-800 rounded-lg transition cursor-pointer"
               title="Logout from Terminal"
             >
               <LogOut className="size-5" />
@@ -2224,8 +2623,6 @@ if (res.status === 401) {
                               {selectedBranchId === "all" && <CheckCircle className="size-3.5 shrink-0" />}
                             </button>
                           )}
-                          
-                          {branches
                           
                           {branches
                             .filter(b => b.name.toLowerCase().includes(branchSearchQuery.toLowerCase().trim()))
@@ -2469,47 +2866,75 @@ if (res.status === 401) {
                     </div>
                   ) : (
                     <form onSubmit={handleCreateTransaction} className="space-y-4">
-                      {/* Tx Type Selector */}
+                      {/* Service Category & Operation Selector */}
                       <div>
-                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Tx Type</label>
-                        <div className="grid grid-cols-4 gap-2">
+                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Service Category</label>
+                        <div className="grid grid-cols-2 gap-2 mb-3">
                           <button
                             type="button"
-                            onClick={() => handleTypeChange("deposit")}
-                            className={`py-2 px-1 rounded-lg border font-bold text-xs transition-all uppercase tracking-wider cursor-pointer ${
-                              txType === "deposit" ? "bg-blue-605 bg-blue-600 text-white border-blue-600 shadow-md" : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
+                            onClick={() => {
+                              setFormCategory("MOMO");
+                              if (txType === "airtime") handleTypeChange("deposit");
+                            }}
+                            className={`py-2 px-2.5 rounded-xl border font-black text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                              formCategory === "MOMO" ? "bg-sky-600 text-white border-sky-600 shadow-sm" : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
                             }`}
                           >
-                            📥 Deposit
+                            <span>💸 Mobile Money (MoMo)</span>
                           </button>
                           <button
                             type="button"
-                            onClick={() => handleTypeChange("withdrawal")}
-                            className={`py-2 px-1 rounded-lg border font-bold text-xs transition-all uppercase tracking-wider cursor-pointer ${
-                              txType === "withdrawal" ? "bg-blue-605 bg-blue-600 text-white border-blue-600 shadow-md" : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
+                            onClick={() => {
+                              setFormCategory("AIRTIME");
+                              handleTypeChange("airtime");
+                            }}
+                            className={`py-2 px-2.5 rounded-xl border font-black text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                              formCategory === "AIRTIME" ? "bg-emerald-600 text-white border-emerald-600 shadow-sm" : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
                             }`}
                           >
-                            📤 Withdraw
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleTypeChange("send_money")}
-                            className={`py-2 px-1 rounded-lg border font-bold text-xs transition-all uppercase tracking-wider cursor-pointer ${
-                              txType === "send_money" ? "bg-blue-605 bg-blue-600 text-white border-blue-600 shadow-md" : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
-                            }`}
-                          >
-                            💸 Send
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleTypeChange("airtime")}
-                            className={`py-2 px-1 rounded-lg border font-bold text-xs transition-all uppercase tracking-wider cursor-pointer ${
-                              txType === "airtime" ? "bg-blue-605 bg-blue-600 text-white border-blue-600 shadow-md" : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
-                            }`}
-                          >
-                            📱 Airtime
+                            <span>📱 Airtime Top-Up</span>
                           </button>
                         </div>
+
+                        {formCategory === "MOMO" ? (
+                          <div>
+                            <label className="block text-[10px] font-bold text-sky-800 uppercase tracking-wider mb-1.5">MoMo Transaction Operation</label>
+                            <div className="grid grid-cols-3 gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleTypeChange("deposit")}
+                                className={`py-2 px-1 rounded-lg border font-extrabold text-xs transition-all uppercase tracking-wider cursor-pointer ${
+                                  txType === "deposit" ? "bg-sky-600 text-white border-sky-600 shadow-md" : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
+                                }`}
+                              >
+                                📥 Deposit
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleTypeChange("withdrawal")}
+                                className={`py-2 px-1 rounded-lg border font-extrabold text-xs transition-all uppercase tracking-wider cursor-pointer ${
+                                  txType === "withdrawal" ? "bg-sky-600 text-white border-sky-600 shadow-md" : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
+                                }`}
+                              >
+                                📤 Withdraw
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleTypeChange("send_money")}
+                                className={`py-2 px-1 rounded-lg border font-extrabold text-xs transition-all uppercase tracking-wider cursor-pointer ${
+                                  txType === "send_money" ? "bg-sky-600 text-white border-sky-600 shadow-md" : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
+                                }`}
+                              >
+                                💸 Send
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-2.5 text-xs text-emerald-900 font-bold flex items-center justify-between">
+                            <span>📱 Airtime Top-Up Selected</span>
+                            <span className="text-[10px] bg-emerald-200 text-emerald-950 font-black px-2 py-0.5 rounded uppercase">Airtime Wallet</span>
+                          </div>
+                        )}
                       </div>
 
                       {/* Network Selector */}
@@ -2553,7 +2978,8 @@ if (res.status === 401) {
                           <input
                             type="number"
                             required
-                            min="1"
+                            min="0.01"
+                            step="0.01"
                             value={txAmount}
                             onChange={(e) => handleAmountChange(e.target.value, txType)}
                             className="block w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm font-bold focus:outline-none focus:ring-1 focus:ring-blue-500"
@@ -2567,6 +2993,7 @@ if (res.status === 401) {
                           <input
                             type="number"
                             step="0.01"
+                            min="0"
                             value={txCommission}
                             onChange={(e) => setTxCommission(e.target.value)}
                             className="block w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm font-bold bg-amber-50 text-amber-950 border-amber-300 focus:outline-none focus:ring-1 focus:ring-amber-500"
@@ -2612,10 +3039,10 @@ if (res.status === 401) {
 
                 {/* Today's Transactions List */}
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 space-y-4">
-                  <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-100 pb-3 gap-2">
                     <div>
                       <h3 className="font-bold text-slate-800 text-sm">Today's Shift Activity</h3>
-                      <p className="text-[11px] text-slate-400">Showing recent branch records</p>
+                      <p className="text-[11px] text-slate-400">Separate MoMo and Airtime records</p>
                     </div>
                     <div className="relative">
                       <Search className="size-3.5 absolute right-2.5 top-2 text-slate-400" />
@@ -2627,6 +3054,43 @@ if (res.status === 401) {
                         className="bg-slate-50 border border-slate-200 rounded font-semibold text-[11px] px-2.5 py-1.5 pr-8 focus:outline-none focus:ring-1 focus:ring-blue-500"
                       />
                     </div>
+                  </div>
+
+                  {/* MoMo vs Airtime Category Filter Tabs */}
+                  <div className="flex gap-1 bg-slate-100 p-1 rounded-lg text-xs font-bold">
+                    <button
+                      type="button"
+                      onClick={() => setTxCategoryFilter("ALL")}
+                      className={`flex-1 py-1 px-2 rounded-md transition-all cursor-pointer text-center ${
+                        txCategoryFilter === "ALL" ? "bg-white text-slate-900 shadow-xs font-extrabold" : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      All ({transactions.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTxCategoryFilter("MOMO")}
+                      className={`flex-1 py-1 px-2 rounded-md transition-all cursor-pointer flex items-center justify-center gap-1 ${
+                        txCategoryFilter === "MOMO" ? "bg-sky-600 text-white shadow-xs font-extrabold" : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      <span>💸 MoMo</span>
+                      <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${txCategoryFilter === "MOMO" ? "bg-sky-700 text-white" : "bg-slate-200 text-slate-700"}`}>
+                        {transactions.filter(t => t.type !== "airtime").length}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTxCategoryFilter("AIRTIME")}
+                      className={`flex-1 py-1 px-2 rounded-md transition-all cursor-pointer flex items-center justify-center gap-1 ${
+                        txCategoryFilter === "AIRTIME" ? "bg-emerald-600 text-white shadow-xs font-extrabold" : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      <span>📱 Airtime</span>
+                      <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${txCategoryFilter === "AIRTIME" ? "bg-emerald-700 text-white" : "bg-slate-200 text-slate-700"}`}>
+                        {transactions.filter(t => t.type === "airtime").length}
+                      </span>
+                    </button>
                   </div>
 
                   <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
@@ -2656,10 +3120,11 @@ if (res.status === 401) {
                             ) : currentUser?.role === "ADMIN" ? (
                               <button
                                 type="button"
-                                onClick={() => setSelectedTxForCorrection(t)}
-                                className="text-[10px] text-red-600 hover:text-red-800 hover:underline cursor-pointer font-bold"
+                                onClick={() => openCorrectionModal(t)}
+                                className="text-[10px] bg-amber-50 hover:bg-amber-100 text-amber-800 px-2 py-0.5 rounded border border-amber-200 font-extrabold cursor-pointer transition-all"
+                                title="Admin: Correct transaction figures & auto-recalculate balances"
                               >
-                                Reverse
+                                ✏️ Correct
                               </button>
                             ) : (
                               <span className="text-[9px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">OK</span>
@@ -2720,6 +3185,8 @@ if (res.status === 401) {
                           <input
                             type="number"
                             required
+                            step="0.01"
+                            min="0"
                             value={openingCash}
                             onChange={(e) => setOpeningCash(e.target.value)}
                             className="w-full mt-1 px-3 py-1.5 border rounded-lg text-xs font-bold"
@@ -2733,6 +3200,8 @@ if (res.status === 401) {
                             <input
                               type="number"
                               required
+                              step="0.01"
+                              min="0"
                               value={openingMtn}
                               onChange={(e) => setOpeningMtn(e.target.value)}
                               className="w-full mt-1 px-2 py-1.5 border rounded text-xs text-center font-bold"
@@ -2744,6 +3213,8 @@ if (res.status === 401) {
                             <input
                               type="number"
                               required
+                              step="0.01"
+                              min="0"
                               value={openingTelecel}
                               onChange={(e) => setOpeningTelecel(e.target.value)}
                               className="w-full mt-1 px-2 py-1.5 border rounded text-xs text-center font-bold"
@@ -2755,6 +3226,8 @@ if (res.status === 401) {
                             <input
                               type="number"
                               required
+                              step="0.01"
+                              min="0"
                               value={openingAirtel}
                               onChange={(e) => setOpeningAirtel(e.target.value)}
                               className="w-full mt-1 px-2 py-1.5 border rounded text-xs text-center font-bold"
@@ -2796,6 +3269,8 @@ if (res.status === 401) {
                           <input
                             type="number"
                             required
+                            step="0.01"
+                            min="0"
                             value={actualCash}
                             onChange={(e) => setActualCash(e.target.value)}
                             className="w-full mt-1 px-3 py-2 border rounded-lg text-sm font-bold text-blue-900 focus:outline-none"
@@ -2872,123 +3347,150 @@ if (res.status === 401) {
         ) : (
           <>
             {/* Navigation Sidebar */}
-            <aside className="w-full md:w-64 shrink-0 space-y-2">
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-3">
-            <span className="block px-3 pt-1 pb-2 text-xs font-bold text-slate-400 uppercase tracking-wider">Operational Menu</span>
-            <nav className="space-y-1">
-              <button
-                onClick={() => { setActiveTab("dashboard"); setClosingSuccess(null); }}
-                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer ${
-                  activeTab === "dashboard" ? "bg-blue-600 text-white shadow-md shadow-blue-600/30" : "text-slate-700 hover:bg-slate-100"
-                }`}
-              >
-                <TrendingUp className="size-5" />
-                <span>Dashboard Home</span>
-              </button>
-
-              <button
-                onClick={() => { setActiveTab("transactions"); setClosingSuccess(null); }}
-                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer ${
-                  activeTab === "transactions" ? "bg-blue-600 text-white shadow-md shadow-blue-600/30" : "text-slate-700 hover:bg-slate-100"
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <Smartphone className="size-5" />
-                  <span>Enter Transaction</span>
+            <aside className="w-full md:w-64 shrink-0 space-y-3">
+              {/* Operations Group */}
+              <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-3">
+                <div className="flex items-center gap-2 px-3 pt-1 pb-2 border-b border-slate-100 mb-2">
+                  <Briefcase className="size-3.5 text-blue-600" />
+                  <span className="text-[11px] font-black text-slate-800 uppercase tracking-wider">Operations</span>
                 </div>
-                {activeShift ? (
-                  <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 border-2 border-white ring-1 ring-emerald-500 animate-pulse"></span>
-                ) : null}
-              </button>
-
-              <button
-                onClick={() => { setActiveTab("debts"); setClosingSuccess(null); }}
-                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer ${
-                  activeTab === "debts" ? "bg-blue-600 text-white shadow-md shadow-blue-600/30" : "text-slate-700 hover:bg-slate-100"
-                }`}
-              >
-                <Layers className="size-5" />
-                <span>Debt Ledger Book</span>
-              </button>
-
-              <button
-                onClick={() => { setActiveTab("closing"); setClosingSuccess(null); }}
-                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer ${
-                  activeTab === "closing" ? "bg-blue-600 text-white shadow-md shadow-blue-600/30" : "text-slate-700 hover:bg-slate-100"
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <History className="size-5" />
-                  <span>Shift Close / EOD</span>
-                </div>
-                {currentUser?.role === "ADMIN" ? (
-                  <span className="text-[9px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded border border-slate-200 font-extrabold uppercase tracking-wider">BYPASS</span>
-                ) : !activeShift ? (
-                  <span className="text-xs bg-slate-200 text-slate-700 px-2 py-0.5 rounded-full font-bold">OFF</span>
-                ) : (
-                  <span className="text-xs bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold">ON</span>
-                )}
-              </button>
-            </nav>
-          </div>
-
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-3">
-            <span className="block px-3 pt-1 pb-2 text-xs font-bold text-slate-400 uppercase tracking-wider">Management & Logs</span>
-            <nav className="space-y-1">
-              <button
-                onClick={() => { setActiveTab("reports"); setClosingSuccess(null); }}
-                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer ${
-                  activeTab === "reports" ? "bg-blue-600 text-white shadow-md shadow-blue-600/30" : "text-slate-700 hover:bg-slate-100"
-                }`}
-              >
-                <FileText className="size-5" />
-                <span>Financial Reports</span>
-              </button>
-
-
-
-              {currentUser?.role === "ADMIN" && (
-                <>
+                <nav className="space-y-1">
                   <button
-                    onClick={() => { setActiveTab("branches_workers"); setClosingSuccess(null); }}
+                    onClick={() => { setActiveTab("dashboard"); setClosingSuccess(null); }}
                     className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer ${
-                      activeTab === "branches_workers" ? "bg-blue-600 text-white shadow-md shadow-blue-600/30" : "text-slate-700 hover:bg-slate-100"
+                      activeTab === "dashboard" ? "bg-blue-600 text-white shadow-md shadow-blue-600/30 font-bold" : "text-slate-700 hover:bg-slate-100"
                     }`}
                   >
-                    <Building className="size-5" />
-                    <span>Branches & Staff</span>
+                    <TrendingUp className="size-4" />
+                    <span>Dashboard Home</span>
                   </button>
 
                   <button
-                    onClick={() => { setActiveTab("audit"); setClosingSuccess(null); }}
-                    className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer ${
-                      activeTab === "audit" ? "bg-blue-600 text-white shadow-md shadow-blue-600/30" : "text-slate-700 hover:bg-slate-100"
-                    }`}
-                  >
-                    <History className="size-5" />
-                    <span>Audit Trail Logs</span>
-                  </button>
-
-                  <button
-                    onClick={() => { setActiveTab("approvals_security"); setClosingSuccess(null); }}
+                    onClick={() => { setActiveTab("transactions"); setClosingSuccess(null); }}
                     className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer ${
-                      activeTab === "approvals_security" ? "bg-blue-600 text-white shadow-md shadow-blue-600/30" : "text-slate-700 hover:bg-slate-100"
+                      activeTab === "transactions" ? "bg-blue-600 text-white shadow-md shadow-blue-600/30 font-bold" : "text-slate-700 hover:bg-slate-100"
                     }`}
                   >
                     <div className="flex items-center gap-3">
-                      <ShieldAlert className="size-5 text-amber-500 fill-amber-500/10" />
-                      <span>Security approvals</span>
+                      <Smartphone className="size-4" />
+                      <span>Enter Transaction</span>
                     </div>
-                    {pendingApprovalsCount > 0 && (
-                      <span className="bg-rose-500 text-white text-xs font-bold px-2 py-0.5 rounded-full ring-2 ring-white animate-pulse">
-                        {pendingApprovalsCount}
+                    {activeShift ? (
+                      <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 border-2 border-white ring-1 ring-emerald-500 animate-pulse"></span>
+                    ) : null}
+                  </button>
+
+                  <button
+                    onClick={() => { setActiveTab("closing"); setClosingSuccess(null); }}
+                    className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer ${
+                      activeTab === "closing" ? "bg-blue-600 text-white shadow-md shadow-blue-600/30 font-bold" : "text-slate-700 hover:bg-slate-100"
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <History className="size-4" />
+                      <span>Shift Close / EOD</span>
+                    </div>
+                    {currentUser?.role === "ADMIN" ? (
+                      <span className="text-[9px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded border border-slate-200 font-extrabold uppercase tracking-wider">BYPASS</span>
+                    ) : !activeShift ? (
+                      <span className="text-xs bg-slate-200 text-slate-700 px-2 py-0.5 rounded-full font-bold">OFF</span>
+                    ) : (
+                      <span className="text-xs bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold">ON</span>
+                    )}
+                  </button>
+                </nav>
+              </div>
+
+              {/* Ledger Group */}
+              <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-3">
+                <div className="flex items-center gap-2 px-3 pt-1 pb-2 border-b border-slate-100 mb-2">
+                  <BookOpen className="size-3.5 text-emerald-600" />
+                  <span className="text-[11px] font-black text-slate-800 uppercase tracking-wider">Ledger</span>
+                </div>
+                <nav className="space-y-1">
+                  <button
+                    onClick={() => { setActiveTab("debts"); setClosingSuccess(null); }}
+                    className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer ${
+                      activeTab === "debts" ? "bg-blue-600 text-white shadow-md shadow-blue-600/30 font-bold" : "text-slate-700 hover:bg-slate-100"
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <Layers className="size-4" />
+                      <span>Debt Ledger Book</span>
+                    </div>
+                    {overdueDebtsCount > 0 && (
+                      <span className="bg-rose-500 text-white text-[11px] font-extrabold px-2 py-0.5 rounded-full ring-2 ring-white animate-pulse flex items-center gap-1 shadow-xs">
+                        <span>{overdueDebtsCount}</span>
+                        <span className="text-[9px] uppercase tracking-wider">Overdue</span>
                       </span>
                     )}
                   </button>
-                </>
-              )}
-            </nav>
-          </div>
+
+                  <button
+                    onClick={() => { setActiveTab("reports"); setClosingSuccess(null); }}
+                    className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer ${
+                      activeTab === "reports" ? "bg-blue-600 text-white shadow-md shadow-blue-600/30 font-bold" : "text-slate-700 hover:bg-slate-100"
+                    }`}
+                  >
+                    <FileText className="size-4" />
+                    <span>Financial Reports</span>
+                  </button>
+                </nav>
+              </div>
+
+              {/* Management Group */}
+              <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-3">
+                <div className="flex items-center gap-2 px-3 pt-1 pb-2 border-b border-slate-100 mb-2">
+                  <Sliders className="size-3.5 text-purple-600" />
+                  <span className="text-[11px] font-black text-slate-800 uppercase tracking-wider">Management</span>
+                </div>
+                <nav className="space-y-1">
+                  {currentUser?.role === "ADMIN" ? (
+                    <>
+                      <button
+                        onClick={() => { setActiveTab("branches_workers"); setClosingSuccess(null); }}
+                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer ${
+                          activeTab === "branches_workers" ? "bg-blue-600 text-white shadow-md shadow-blue-600/30 font-bold" : "text-slate-700 hover:bg-slate-100"
+                        }`}
+                      >
+                        <Building className="size-4" />
+                        <span>Branches & Staff</span>
+                      </button>
+
+                      <button
+                        onClick={() => { setActiveTab("audit"); setClosingSuccess(null); }}
+                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer ${
+                          activeTab === "audit" ? "bg-blue-600 text-white shadow-md shadow-blue-600/30 font-bold" : "text-slate-700 hover:bg-slate-100"
+                        }`}
+                      >
+                        <History className="size-4" />
+                        <span>Audit Trail Logs</span>
+                      </button>
+
+                      <button
+                        onClick={() => { setActiveTab("approvals_security"); setClosingSuccess(null); }}
+                        className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer ${
+                          activeTab === "approvals_security" ? "bg-blue-600 text-white shadow-md shadow-blue-600/30 font-bold" : "text-slate-700 hover:bg-slate-100"
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <ShieldAlert className="size-4 text-amber-500 fill-amber-500/10" />
+                          <span>Security Approvals</span>
+                        </div>
+                        {pendingApprovalsCount > 0 && (
+                          <span className="bg-rose-500 text-white text-xs font-bold px-2 py-0.5 rounded-full ring-2 ring-white animate-pulse">
+                            {pendingApprovalsCount}
+                          </span>
+                        )}
+                      </button>
+                    </>
+                  ) : (
+                    <div className="px-3 py-1.5 text-xs text-slate-400 italic">
+                      Admin management restricted
+                    </div>
+                  )}
+                </nav>
+              </div>
 
           {/* Quick Realtime Balance widgets in Sidebar */}
           <div className="space-y-4">
@@ -3077,9 +3579,61 @@ if (res.status === 401) {
               transition={{ duration: 0.3, ease: "easeOut" }}
               className="space-y-6"
             >
-              <div className="border-b border-slate-100 pb-4">
-                <h2 className="text-2xl font-bold text-navy-dark">Enakomoor Ventures Dashboard</h2>
-                <p className="text-slate-500 text-sm">Consolidated figures for: <span className="font-semibold text-blue-600">{selectedBranchId === "all" ? "All Operating Branches" : branches.find(b => b.id === selectedBranchId)?.name}</span></p>
+              <div className="border-b border-slate-100 pb-4 flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-2xl font-bold text-navy-dark">Enakomoor Ventures Dashboard</h2>
+                  <p className="text-slate-500 text-sm">Consolidated figures for: <span className="font-semibold text-blue-600">{selectedBranchId === "all" ? "All Operating Branches" : branches.find(b => b.id === selectedBranchId)?.name}</span></p>
+                </div>
+
+                {/* HORIZONTAL COMBINED CAPITAL TILE ON DASHBOARD HEADER */}
+                <motion.div 
+                  initial={{ opacity: 0, scale: 0.98 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className="bg-gradient-to-r from-slate-900 via-indigo-950 to-purple-950 text-white rounded-xl p-3 px-4 shadow-md border border-purple-500/30 flex flex-wrap sm:flex-nowrap items-center justify-between gap-3"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="size-10 rounded-lg bg-yellow-400/20 text-yellow-300 flex items-center justify-center border border-yellow-400/30 shrink-0">
+                      <Coins className="size-5 text-yellow-400" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-purple-200">Combined Total Capital</span>
+                        <span className="text-[9px] bg-yellow-400 text-slate-950 font-extrabold px-1.5 py-0.2 rounded uppercase">
+                          Working + External
+                        </span>
+                      </div>
+                      <div className="text-xl sm:text-2xl font-black font-mono text-yellow-300">
+                        GHS {((stats?.totalWorkingCapital ?? 0) + (stats?.remainingExternalCapital ?? 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3 border-t sm:border-t-0 sm:border-l border-slate-700/80 pt-2 sm:pt-0 sm:pl-3 w-full sm:w-auto justify-between sm:justify-start">
+                    <div className="text-[10px] space-y-0.5">
+                      <div className="text-slate-300">
+                        Actual Working: <span className="font-mono font-bold text-emerald-300">GHS {(stats?.totalWorkingCapital ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        <span className="ml-1 text-[9px] text-slate-400 italic">(Admin Only)</span>
+                      </div>
+                      <div className="text-purple-300">
+                        External Capital: <span className="font-mono font-bold text-purple-200">GHS {(stats?.remainingExternalCapital ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsExtCapModalOpen(true);
+                        setExtCapError("");
+                        setExtCapSuccess("");
+                      }}
+                      className="bg-purple-600 hover:bg-purple-500 text-white text-[10px] font-extrabold px-2.5 py-1.5 rounded-lg shadow-sm transition-all cursor-pointer shrink-0 uppercase tracking-wider flex items-center gap-1"
+                      title="Solicit, tap, or mark external capital returned (Admin & Workers)"
+                    >
+                      <Coins className="size-3.5" />
+                      <span>Manage Capital</span>
+                    </button>
+                  </div>
+                </motion.div>
               </div>
 
               {/* ADMIN PAST DUE ALERT BANNER */}
@@ -3279,9 +3833,115 @@ if (res.status === 401) {
 
               {/* STATS CARDS */}
               {stats ? (
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+                  {/* TOTAL WORKING CAPITAL CARD */}
                   <motion.div 
-                    whileHover={{ y: -5, scale: 1.01 }} 
+                    whileHover={{ y: -6, scale: 1.025 }} 
+                    transition={{ type: "spring", stiffness: 350, damping: 20 }}
+                    className="bg-slate-900 text-white border-2 border-indigo-600 hover:border-indigo-400 rounded-xl p-4 flex flex-col justify-between shadow-md cursor-default hover:shadow-xl transition-all duration-300 relative overflow-hidden"
+                  >
+                    <div className="absolute -right-2 -bottom-2 opacity-10 pointer-events-none">
+                      <Landmark className="size-20 text-indigo-300" />
+                    </div>
+                    <div>
+                      <div className="flex items-center justify-between gap-1 flex-wrap">
+                        <span className="text-[11px] font-black text-indigo-300 uppercase tracking-wider flex items-center gap-1">
+                          <Coins className="size-3.5 text-yellow-400" /> Working Capital
+                        </span>
+                        <span className="text-[9px] bg-yellow-400 text-slate-950 font-extrabold px-1.5 py-0.5 rounded uppercase tracking-tight">
+                          {selectedBranchId === "all" ? "All Outlets" : "Branch Total"}
+                        </span>
+                      </div>
+                      <div className="mt-1.5 flex items-center">
+                        <AnimatedValue 
+                          value={stats.totalWorkingCapital ?? (stats.outstandingDebts + (stats.currentMtnFloat + stats.currentTelecelFloat + stats.currentAirtelTigoFloat) + stats.currentCashBalance)} 
+                          isCurrency={true} 
+                          className="text-2xl font-black font-mono text-yellow-300" 
+                        />
+                      </div>
+                    </div>
+                    <div className="mt-2.5 pt-2 border-t border-slate-800 text-[10px] text-slate-300 font-medium space-y-1">
+                      <div className="flex justify-between items-center">
+                        <span className="text-slate-400">• Debts Entered:</span>
+                        <span className="font-mono font-bold text-amber-300">GHS {stats.outstandingDebts.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-slate-400">• All Floats:</span>
+                        <span className="font-mono font-bold text-blue-300">GHS {(stats.currentMtnFloat + stats.currentTelecelFloat + stats.currentAirtelTigoFloat).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-slate-400">• Physical Cash:</span>
+                        <span className="font-mono font-bold text-emerald-300">GHS {stats.currentCashBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      </div>
+
+                      {/* ADMIN PER-BRANCH BREAKDOWN ON CARD */}
+                      {currentUser?.role === "ADMIN" && stats?.branchNetProfits && stats.branchNetProfits.length > 0 && (
+                        <div className="mt-2 pt-1.5 border-t border-slate-800 space-y-0.5">
+                          <div className="text-[9px] font-black text-indigo-300 uppercase tracking-widest">Branch Capital:</div>
+                          {stats.branchNetProfits.map(b => (
+                            <div key={b.branchId} className="flex justify-between items-center text-[9.5px]">
+                              <span className="text-slate-300 truncate max-w-[95px]">• {b.branchName}:</span>
+                              <span className="font-mono font-bold text-yellow-300">GHS {(b.workingCapital ?? 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </motion.div>
+
+                  {/* EXTERNAL CAPITAL RESERVE CARD (SHUFFLED NEXT TO WORKING CAPITAL) */}
+                  <motion.div 
+                    whileHover={{ y: -6, scale: 1.025 }} 
+                    transition={{ type: "spring", stiffness: 350, damping: 20 }}
+                    className="bg-purple-50 border-2 border-purple-300 hover:border-purple-400 rounded-xl p-4 flex flex-col justify-between shadow-sm cursor-default hover:shadow-lg transition-all duration-300 relative overflow-hidden"
+                  >
+                    <div>
+                      <div className="flex items-center justify-between gap-1 flex-wrap">
+                        <span className="text-[11px] font-black text-purple-900 uppercase tracking-wider flex items-center gap-1">
+                          <Coins className="size-3.5 text-purple-600" /> External Capital
+                        </span>
+                        <span className="text-[9px] bg-purple-200 text-purple-950 font-extrabold px-1.5 py-0.5 rounded uppercase tracking-tight">
+                          Solicited Reserve
+                        </span>
+                      </div>
+                      <div className="mt-1.5 flex items-center">
+                        <AnimatedValue 
+                          value={stats.remainingExternalCapital ?? 0} 
+                          isCurrency={true} 
+                          className="text-2xl font-black font-mono text-purple-950" 
+                        />
+                      </div>
+                    </div>
+                    <div className="mt-2 pt-2 border-t border-purple-200/80 text-[10px] text-purple-900 font-medium space-y-1">
+                      <div className="flex justify-between items-center">
+                        <span className="text-purple-700">💳 Electronic Float:</span>
+                        <span className="font-mono font-bold text-purple-950">GHS {(stats.externalElectronicCapital ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-purple-700">💵 Physical Cash:</span>
+                        <span className="font-mono font-bold text-purple-950">GHS {(stats.externalPhysicalCapital ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-purple-600">⚡ Auto-Tapped:</span>
+                        <span className="font-mono font-bold text-amber-700">GHS {(stats.tappedExternalCapital ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsExtCapModalOpen(true);
+                          setExtCapError("");
+                          setExtCapSuccess("");
+                        }}
+                        className="w-full mt-2 py-1.5 px-2 bg-purple-700 hover:bg-purple-800 text-white font-extrabold text-[10px] uppercase rounded-lg shadow-xs transition-all cursor-pointer flex items-center justify-center gap-1"
+                      >
+                        <Plus className="size-3" />
+                        <span>Manage / Mark Returned</span>
+                      </button>
+                    </div>
+                  </motion.div>
+
+                  <motion.div 
+                    whileHover={{ y: -6, scale: 1.025 }} 
                     animate={profitHighlight ? {
                       scale: [1, 1.05, 0.98, 1.02, 1],
                     } : {}}
@@ -3291,7 +3951,7 @@ if (res.status === 401) {
                       damping: 20,
                       scale: { duration: 0.6 }
                     }}
-                    className="relative bg-emerald-50 border border-emerald-100 rounded-xl p-4 flex flex-col justify-between shadow-sm cursor-default hover:shadow-md transition-shadow duration-300 overflow-hidden"
+                    className="relative bg-emerald-50 border border-emerald-100 hover:border-emerald-300 rounded-xl p-4 flex flex-col justify-between shadow-sm cursor-default hover:shadow-lg transition-all duration-300 overflow-hidden"
                   >
                     <AnimatePresence>
                       {profitHighlight && (
@@ -3310,13 +3970,27 @@ if (res.status === 401) {
                         <AnimatedValue value={stats.todayProfit} isCurrency={true} className="text-2xl font-black font-mono text-emerald-900" />
                       </div>
                     </div>
-                    <span className="text-[10px] text-emerald-700/80 mt-2 font-medium">Includes bulk airtime margin override</span>
+                    <div className="mt-2">
+                      <span className="text-[10px] text-emerald-700/80 font-medium block">Includes bulk airtime margin</span>
+                      {/* ADMIN PER-BRANCH PROFIT BREAKDOWN */}
+                      {currentUser?.role === "ADMIN" && stats?.branchNetProfits && stats.branchNetProfits.length > 0 && (
+                        <div className="mt-2 pt-1.5 border-t border-emerald-200 space-y-0.5">
+                          <div className="text-[9px] font-black text-emerald-800 uppercase tracking-widest">Branch Profit:</div>
+                          {stats.branchNetProfits.map(b => (
+                            <div key={b.branchId} className="flex justify-between items-center text-[9.5px]">
+                              <span className="text-emerald-900 truncate max-w-[95px]">• {b.branchName}:</span>
+                              <span className="font-mono font-bold text-emerald-950">GHS {(b.todayProfit ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </motion.div>
  
                   <motion.div 
-                    whileHover={{ y: -5, scale: 1.01 }} 
+                    whileHover={{ y: -6, scale: 1.025 }} 
                     transition={{ type: "spring", stiffness: 350, damping: 20 }}
-                    className="bg-blue-50 border border-blue-100 rounded-xl p-4 flex flex-col justify-between shadow-sm cursor-default hover:shadow-md transition-shadow duration-300"
+                    className="bg-blue-50 border border-blue-100 hover:border-blue-300 rounded-xl p-4 flex flex-col justify-between shadow-sm cursor-default hover:shadow-lg transition-all duration-300"
                   >
                     <div>
                       <span className="text-xs font-bold text-blue-800 uppercase tracking-wide">Today's Tx Vol.</span>
@@ -3324,13 +3998,27 @@ if (res.status === 401) {
                         <AnimatedValue value={stats.todayTransactionsCount} className="text-2xl font-black font-mono text-blue-900" />
                       </div>
                     </div>
-                    <span className="text-[10px] text-blue-700/80 mt-2 font-medium">Entries across system</span>
+                    <div className="mt-2">
+                      <span className="text-[10px] text-blue-700/80 font-medium block">Entries across system</span>
+                      {/* ADMIN PER-BRANCH TX VOL BREAKDOWN */}
+                      {currentUser?.role === "ADMIN" && stats?.branchNetProfits && stats.branchNetProfits.length > 0 && (
+                        <div className="mt-2 pt-1.5 border-t border-blue-200 space-y-0.5">
+                          <div className="text-[9px] font-black text-blue-800 uppercase tracking-widest">Branch Entries:</div>
+                          {stats.branchNetProfits.map(b => (
+                            <div key={b.branchId} className="flex justify-between items-center text-[9.5px]">
+                              <span className="text-blue-900 truncate max-w-[95px]">• {b.branchName}:</span>
+                              <span className="font-mono font-bold text-blue-950">{(b.todayTxCount ?? 0)} txs</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </motion.div>
  
                   <motion.div 
-                    whileHover={{ y: -5, scale: 1.01 }} 
+                    whileHover={{ y: -6, scale: 1.025 }} 
                     transition={{ type: "spring", stiffness: 350, damping: 20 }}
-                    className="bg-amber-50 border border-amber-100 rounded-xl p-4 flex flex-col justify-between shadow-sm cursor-default hover:shadow-md transition-shadow duration-300"
+                    className="bg-amber-50 border border-amber-100 hover:border-amber-300 rounded-xl p-4 flex flex-col justify-between shadow-sm cursor-default hover:shadow-lg transition-all duration-300"
                   >
                     <div>
                       <div className="flex items-center justify-between gap-1.5 flex-wrap">
@@ -3345,13 +4033,27 @@ if (res.status === 401) {
                         <AnimatedValue value={stats.outstandingDebts} isCurrency={true} className="text-2xl font-black font-mono text-amber-900" />
                       </div>
                     </div>
-                    <span className="text-[10px] text-amber-700/80 mt-2 font-semibold">GHS active in ledger</span>
+                    <div className="mt-2">
+                      <span className="text-[10px] text-amber-700/80 font-semibold block">GHS active in ledger</span>
+                      {/* ADMIN PER-BRANCH DEBTS BREAKDOWN */}
+                      {currentUser?.role === "ADMIN" && stats?.branchNetProfits && stats.branchNetProfits.length > 0 && (
+                        <div className="mt-2 pt-1.5 border-t border-amber-200 space-y-0.5">
+                          <div className="text-[9px] font-black text-amber-800 uppercase tracking-widest">Branch Debts:</div>
+                          {stats.branchNetProfits.map(b => (
+                            <div key={b.branchId} className="flex justify-between items-center text-[9.5px]">
+                              <span className="text-amber-900 truncate max-w-[95px]">• {b.branchName}:</span>
+                              <span className="font-mono font-bold text-amber-950">GHS {(b.outstandingDebts ?? 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </motion.div>
  
                   <motion.div 
-                    whileHover={{ y: -5, scale: 1.01 }} 
+                    whileHover={{ y: -6, scale: 1.025 }} 
                     transition={{ type: "spring", stiffness: 350, damping: 20 }}
-                    className="bg-red-50 border border-red-100 rounded-xl p-4 flex flex-col justify-between shadow-sm cursor-default hover:shadow-md transition-shadow duration-300"
+                    className="bg-red-50 border border-red-100 hover:border-red-300 rounded-xl p-4 flex flex-col justify-between shadow-sm cursor-default hover:shadow-lg transition-all duration-300"
                   >
                     <div>
                       <span className="text-xs font-bold text-red-800 uppercase tracking-wide">Expected Cash</span>
@@ -3359,19 +4061,34 @@ if (res.status === 401) {
                         <AnimatedValue value={stats.currentCashBalance} isCurrency={true} className="text-2xl font-black font-mono text-red-900" />
                       </div>
                     </div>
-                    <span className="text-[10px] text-red-700/80 mt-2 font-medium">Float adjusted target</span>
+                    <div className="mt-2">
+                      <span className="text-[10px] text-red-700/80 font-medium block">Float adjusted target</span>
+                      {/* ADMIN PER-BRANCH CASH BREAKDOWN */}
+                      {currentUser?.role === "ADMIN" && stats?.branchNetProfits && stats.branchNetProfits.length > 0 && (
+                        <div className="mt-2 pt-1.5 border-t border-red-200 space-y-0.5">
+                          <div className="text-[9px] font-black text-red-800 uppercase tracking-widest">Branch Cash:</div>
+                          {stats.branchNetProfits.map(b => (
+                            <div key={b.branchId} className="flex justify-between items-center text-[9.5px]">
+                              <span className="text-red-900 truncate max-w-[95px]">• {b.branchName}:</span>
+                              <span className="font-mono font-bold text-red-950">GHS {(b.cashBalance ?? 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </motion.div>
                 </div>
               ) : (
                 <div className="text-center py-6 text-slate-500">Retrieving stats...</div>
               )}
 
-              {/* CONSOLIDATED MOMO FLOAT WALLET SUMMARIES */}
+              {/* CONSOLIDATED MOMO FLOAT WALLET SUMMARIES WITH ADMIN PER-BRANCH BREAKDOWNS */}
               {currentUser?.role === "ADMIN" && stats && (
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-4">
                   <motion.div 
-                    whileHover={{ y: -3 }}
-                    className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 flex flex-col justify-between shadow-sm hover:shadow transition-all"
+                    whileHover={{ y: -4, scale: 1.025 }}
+                    transition={{ type: "spring", stiffness: 350, damping: 20 }}
+                    className="bg-yellow-50 border border-yellow-200 hover:border-yellow-400 rounded-xl p-4 flex flex-col justify-between shadow-sm hover:shadow-md transition-all duration-300 cursor-default"
                   >
                     <div>
                       <div className="flex justify-between items-center">
@@ -3382,12 +4099,26 @@ if (res.status === 401) {
                         <AnimatedValue value={stats.currentMtnFloat} isCurrency={true} className="text-xl font-black font-mono text-yellow-950" />
                       </div>
                     </div>
-                    <span className="text-[9px] text-yellow-800/80 mt-2 font-medium">Consolidated across selected view</span>
+                    <div className="mt-2">
+                      <span className="text-[9px] text-yellow-800/80 font-medium block">Consolidated across selected view</span>
+                      {stats.branchNetProfits && stats.branchNetProfits.length > 0 && (
+                        <div className="mt-2 pt-1.5 border-t border-yellow-200 space-y-0.5">
+                          <div className="text-[9px] font-black text-yellow-800 uppercase tracking-widest">Per Branch MTN:</div>
+                          {stats.branchNetProfits.map(b => (
+                            <div key={b.branchId} className="flex justify-between items-center text-[9.5px]">
+                              <span className="text-yellow-900 truncate max-w-[120px]">• {b.branchName}:</span>
+                              <span className="font-mono font-bold text-yellow-950">GHS {(b.mtnFloat ?? 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </motion.div>
 
                   <motion.div 
-                    whileHover={{ y: -3 }}
-                    className="bg-sky-50 border border-sky-200 rounded-xl p-4 flex flex-col justify-between shadow-sm hover:shadow transition-all"
+                    whileHover={{ y: -4, scale: 1.025 }}
+                    transition={{ type: "spring", stiffness: 350, damping: 20 }}
+                    className="bg-sky-50 border border-sky-200 hover:border-sky-400 rounded-xl p-4 flex flex-col justify-between shadow-sm hover:shadow-md transition-all duration-300 cursor-default"
                   >
                     <div>
                       <div className="flex justify-between items-center">
@@ -3398,12 +4129,26 @@ if (res.status === 401) {
                         <AnimatedValue value={stats.currentTelecelFloat} isCurrency={true} className="text-xl font-black font-mono text-sky-950" />
                       </div>
                     </div>
-                    <span className="text-[9px] text-sky-800/80 mt-2 font-medium">Consolidated across selected view</span>
+                    <div className="mt-2">
+                      <span className="text-[9px] text-sky-800/80 font-medium block">Consolidated across selected view</span>
+                      {stats.branchNetProfits && stats.branchNetProfits.length > 0 && (
+                        <div className="mt-2 pt-1.5 border-t border-sky-200 space-y-0.5">
+                          <div className="text-[9px] font-black text-sky-800 uppercase tracking-widest">Per Branch Telecel:</div>
+                          {stats.branchNetProfits.map(b => (
+                            <div key={b.branchId} className="flex justify-between items-center text-[9.5px]">
+                              <span className="text-sky-900 truncate max-w-[120px]">• {b.branchName}:</span>
+                              <span className="font-mono font-bold text-sky-950">GHS {(b.telecelFloat ?? 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </motion.div>
 
                   <motion.div 
-                    whileHover={{ y: -3 }}
-                    className="bg-rose-50 border border-rose-200 rounded-xl p-4 flex flex-col justify-between shadow-sm hover:shadow transition-all"
+                    whileHover={{ y: -4, scale: 1.025 }}
+                    transition={{ type: "spring", stiffness: 350, damping: 20 }}
+                    className="bg-rose-50 border border-rose-200 hover:border-rose-400 rounded-xl p-4 flex flex-col justify-between shadow-sm hover:shadow-md transition-all duration-300 cursor-default"
                   >
                     <div>
                       <div className="flex justify-between items-center">
@@ -3414,8 +4159,98 @@ if (res.status === 401) {
                         <AnimatedValue value={stats.currentAirtelTigoFloat} isCurrency={true} className="text-xl font-black font-mono text-rose-950" />
                       </div>
                     </div>
-                    <span className="text-[9px] text-rose-800/80 mt-2 font-medium">Consolidated across selected view</span>
+                    <div className="mt-2">
+                      <span className="text-[9px] text-rose-800/80 font-medium block">Consolidated across selected view</span>
+                      {stats.branchNetProfits && stats.branchNetProfits.length > 0 && (
+                        <div className="mt-2 pt-1.5 border-t border-rose-200 space-y-0.5">
+                          <div className="text-[9px] font-black text-rose-800 uppercase tracking-widest">Per Branch AirtelTigo:</div>
+                          {stats.branchNetProfits.map(b => (
+                            <div key={b.branchId} className="flex justify-between items-center text-[9.5px]">
+                              <span className="text-rose-900 truncate max-w-[120px]">• {b.branchName}:</span>
+                              <span className="font-mono font-bold text-rose-950">GHS {(b.airtelTigoFloat ?? 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </motion.div>
+                </div>
+              )}
+
+              {/* DEDICATED SEPARATE BRANCH PERFORMANCE TILES FOR ADMIN */}
+              {currentUser?.role === "ADMIN" && stats?.branchNetProfits && stats.branchNetProfits.length > 0 && (
+                <div className="mt-6 bg-slate-900 text-white rounded-2xl p-5 border border-slate-800 shadow-md">
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-4 border-b border-slate-800 pb-3">
+                    <div className="flex items-center gap-2">
+                      <Building className="size-5 text-blue-400" />
+                      <div>
+                        <h3 className="text-base font-extrabold text-white">Individual Branch Capital & Performance Tiles</h3>
+                        <p className="text-slate-400 text-xs">Separate real-time values for each operating outlet</p>
+                      </div>
+                    </div>
+                    <span className="text-[10px] bg-blue-500/20 text-blue-300 font-extrabold px-2.5 py-1 rounded-full border border-blue-500/30">
+                      {stats.branchNetProfits.length} Branches Displayed
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {stats.branchNetProfits.map((b) => (
+                      <div key={b.branchId} className="bg-slate-800/80 hover:bg-slate-800 rounded-xl p-4 border border-slate-700/80 shadow-sm transition-all flex flex-col justify-between space-y-3">
+                        <div className="flex justify-between items-start border-b border-slate-700/60 pb-2">
+                          <div>
+                            <h4 className="font-extrabold text-sm text-white flex items-center gap-1.5">
+                              <Building className="size-4 text-blue-400" />
+                              {b.branchName}
+                            </h4>
+                            <p className="text-[10px] text-slate-400 font-medium">{b.location}</p>
+                          </div>
+                          <span className="text-[10px] bg-yellow-400 text-slate-950 font-black px-2 py-0.5 rounded shadow-xs">
+                            Working: GHS {(b.workingCapital ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2 text-[11px]">
+                          <div className="bg-slate-900/60 p-2 rounded-lg border border-slate-700/40 space-y-0.5">
+                            <span className="text-slate-400 text-[10px] font-bold block">💵 Physical Cash</span>
+                            <span className="font-mono font-bold text-emerald-400 text-xs">GHS {(b.cashBalance ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                          </div>
+
+                          <div className="bg-slate-900/60 p-2 rounded-lg border border-slate-700/40 space-y-0.5">
+                            <span className="text-slate-400 text-[10px] font-bold block">💳 MoMo Floats</span>
+                            <span className="font-mono font-bold text-blue-400 text-xs">GHS {(b.totalFloats ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                          </div>
+
+                          <div className="bg-slate-900/60 p-2 rounded-lg border border-slate-700/40 space-y-0.5">
+                            <span className="text-slate-400 text-[10px] font-bold block">📈 Today's Profit</span>
+                            <span className="font-mono font-bold text-yellow-400 text-xs">GHS {(b.todayProfit ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                          </div>
+
+                          <div className="bg-slate-900/60 p-2 rounded-lg border border-slate-700/40 space-y-0.5">
+                            <span className="text-slate-400 text-[10px] font-bold block">📑 Debts Book</span>
+                            <span className="font-mono font-bold text-amber-400 text-xs">GHS {(b.outstandingDebts ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                          </div>
+                        </div>
+
+                        <div className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-700/60 text-[10px] space-y-1.5">
+                          <span className="text-slate-400 font-bold block border-b border-slate-800 pb-1">MoMo Float Wallet Breakdown:</span>
+                          <div className="grid grid-cols-3 gap-1.5 text-center font-mono font-semibold">
+                            <div className="bg-yellow-950/40 text-yellow-300 p-1 rounded border border-yellow-800/40">
+                              <div className="text-[8px] uppercase text-yellow-400 font-extrabold">MTN</div>
+                              <div>GHS {(b.mtnFloat ?? 0).toLocaleString()}</div>
+                            </div>
+                            <div className="bg-sky-950/40 text-sky-300 p-1 rounded border border-sky-800/40">
+                              <div className="text-[8px] uppercase text-sky-400 font-extrabold">Telecel</div>
+                              <div>GHS {(b.telecelFloat ?? 0).toLocaleString()}</div>
+                            </div>
+                            <div className="bg-rose-950/40 text-rose-300 p-1 rounded border border-rose-800/40">
+                              <div className="text-[8px] uppercase text-rose-400 font-extrabold">AirtelTigo</div>
+                              <div>GHS {(b.airtelTigoFloat ?? 0).toLocaleString()}</div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 
@@ -3591,6 +4426,7 @@ if (res.status === 401) {
                         <tr className="bg-slate-50/50 border-b border-slate-150 text-[10px] font-black uppercase text-slate-500 tracking-wider">
                           <th className="p-3 pl-4">Rank & Outlet</th>
                           <th className="p-3">Location</th>
+                          <th className="p-3 text-right text-indigo-700 font-extrabold">Total Working Capital</th>
                           <th className="p-3 text-right">Today's Net Profit</th>
                           <th className="p-3 text-right font-black">Cumulative Net Profit</th>
                           <th className="p-3 text-center">Tx Velocity (All-time)</th>
@@ -3625,6 +4461,16 @@ if (res.status === 401) {
                                   <div className="flex items-center gap-1">
                                     <MapPin className="size-3.5 text-slate-400" />
                                     <span>{branch.location}</span>
+                                  </div>
+                                </td>
+                                <td className="p-3 text-right font-bold font-mono">
+                                  <div className="flex flex-col items-end">
+                                    <span className="text-indigo-900 bg-indigo-50 border border-indigo-150 px-2 py-0.5 rounded font-black text-xs">
+                                      ₵{(branch.workingCapital ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </span>
+                                    <span className="text-[9px] text-slate-400 font-sans mt-0.5">
+                                      Debts: ₵{(branch.outstandingDebts ?? 0).toLocaleString()} • Floats: ₵{(branch.totalFloats ?? 0).toLocaleString()} • Cash: ₵{(branch.cashBalance ?? 0).toLocaleString()}
+                                    </span>
                                   </div>
                                 </td>
                                 <td className="p-3 text-right font-bold text-slate-900 font-mono">
@@ -3965,47 +4811,75 @@ if (res.status === 401) {
                     <div className="lg:col-span-7 bg-slate-50 p-6 rounded-2xl border border-slate-200">
                       <form onSubmit={handleCreateTransaction} className="space-y-4">
                       
-                      {/* Modern big buttons for Transaction type */}
+                      {/* Service Category & Operation Selector */}
                       <div>
-                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Transaction Type</label>
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Service Category</label>
+                        <div className="grid grid-cols-2 gap-2 mb-3">
                           <button
                             type="button"
-                            onClick={() => handleTypeChange("deposit")}
-                            className={`py-3.5 px-2 rounded-xl border font-bold text-xs transition-all uppercase tracking-wider cursor-pointer ${
-                              txType === "deposit" ? "bg-blue-605 bg-blue-600 text-white border-blue-600 shadow-md" : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
+                            onClick={() => {
+                              setFormCategory("MOMO");
+                              if (txType === "airtime") handleTypeChange("deposit");
+                            }}
+                            className={`py-3 px-3 rounded-xl border font-black text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                              formCategory === "MOMO" ? "bg-sky-600 text-white border-sky-600 shadow-sm" : "bg-white text-slate-600 border-slate-200 hover:bg-slate-100"
                             }`}
                           >
-                            📥 Deposit
+                            <span>💸 Mobile Money (MoMo)</span>
                           </button>
                           <button
                             type="button"
-                            onClick={() => handleTypeChange("withdrawal")}
-                            className={`py-3.5 px-2 rounded-xl border font-bold text-xs transition-all uppercase tracking-wider cursor-pointer ${
-                              txType === "withdrawal" ? "bg-blue-605 bg-blue-600 text-white border-blue-600 shadow-md" : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
+                            onClick={() => {
+                              setFormCategory("AIRTIME");
+                              handleTypeChange("airtime");
+                            }}
+                            className={`py-3 px-3 rounded-xl border font-black text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                              formCategory === "AIRTIME" ? "bg-emerald-600 text-white border-emerald-600 shadow-sm" : "bg-white text-slate-600 border-slate-200 hover:bg-slate-100"
                             }`}
                           >
-                            📤 Withdraw
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleTypeChange("send_money")}
-                            className={`py-3.5 px-2 rounded-xl border font-bold text-xs transition-all uppercase tracking-wider cursor-pointer ${
-                              txType === "send_money" ? "bg-blue-605 bg-blue-600 text-white border-blue-600 shadow-md" : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
-                            }`}
-                          >
-                            💸 Send Money
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleTypeChange("airtime")}
-                            className={`py-3.5 px-2 rounded-xl border font-bold text-xs transition-all uppercase tracking-wider cursor-pointer ${
-                              txType === "airtime" ? "bg-blue-605 bg-blue-600 text-white border-blue-600 shadow-md" : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
-                            }`}
-                          >
-                            📱 Airtime
+                            <span>📱 Airtime Top-Up</span>
                           </button>
                         </div>
+
+                        {formCategory === "MOMO" ? (
+                          <div>
+                            <label className="block text-[10px] font-bold text-sky-800 uppercase tracking-wider mb-1.5">MoMo Transaction Operation</label>
+                            <div className="grid grid-cols-3 gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleTypeChange("deposit")}
+                                className={`py-3.5 px-2 rounded-xl border font-extrabold text-xs transition-all uppercase tracking-wider cursor-pointer ${
+                                  txType === "deposit" ? "bg-sky-600 text-white border-sky-600 shadow-md" : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
+                                }`}
+                              >
+                                📥 Deposit
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleTypeChange("withdrawal")}
+                                className={`py-3.5 px-2 rounded-xl border font-extrabold text-xs transition-all uppercase tracking-wider cursor-pointer ${
+                                  txType === "withdrawal" ? "bg-sky-600 text-white border-sky-600 shadow-md" : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
+                                }`}
+                              >
+                                📤 Withdraw
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleTypeChange("send_money")}
+                                className={`py-3.5 px-2 rounded-xl border font-extrabold text-xs transition-all uppercase tracking-wider cursor-pointer ${
+                                  txType === "send_money" ? "bg-sky-600 text-white border-sky-600 shadow-md" : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
+                                }`}
+                              >
+                                💸 Send Money
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3.5 text-xs text-emerald-900 font-bold flex items-center justify-between">
+                            <span className="text-sm">📱 Airtime Top-Up Selected</span>
+                            <span className="text-[10px] bg-emerald-200 text-emerald-950 font-black px-2.5 py-1 rounded-md uppercase">Airtime Float Ledger</span>
+                          </div>
+                        )}
                       </div>
 
                       {/* Network Selectors with Brand Themes */}
@@ -4053,7 +4927,8 @@ if (res.status === 401) {
                             id="tx_amount_input"
                             type="number"
                             required
-                            min="1"
+                            min="0.01"
+                            step="0.01"
                             value={txAmount}
                             onChange={(e) => handleAmountChange(e.target.value, txType)}
                             className="block w-full pl-12 pr-3 py-2.5 border border-slate-300 rounded-lg text-lg font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -4075,6 +4950,7 @@ if (res.status === 401) {
                             id="tx_commission_input"
                             type="number"
                             step="0.01"
+                            min="0"
                             value={txCommission}
                             onChange={(e) => setTxCommission(e.target.value)}
                             className="block w-full pl-12 pr-3 py-2.5 border border-slate-300 rounded-lg text-sm font-bold bg-amber-50 text-amber-950 border-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-500"
@@ -4125,8 +5001,11 @@ if (res.status === 401) {
                   {/* RECENT TRANSACTIONS LEDGER AND REVERSALS */}
                   <div className="lg:col-span-5 space-y-4">
                     <div className="bg-white rounded-xl p-4 border border-slate-200">
-                      <div className="flex justify-between items-center mb-3">
-                        <h4 className="font-bold text-xs uppercase tracking-wider text-slate-500">Live Entries in Shift</h4>
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-3 gap-2">
+                        <div>
+                          <h4 className="font-bold text-xs uppercase tracking-wider text-slate-500">Live Entries in Shift</h4>
+                          <p className="text-[10px] text-slate-400">Categorized by MoMo & Airtime</p>
+                        </div>
                         <div className="relative">
                           <Search className="size-3.5 absolute right-2 top-2 text-slate-400" />
                           <input
@@ -4137,6 +5016,43 @@ if (res.status === 401) {
                             className="bg-slate-50 border border-slate-300 rounded font-semibold text-xs px-2.5 py-1.5 pr-8 focus:outline-none focus:ring-1 focus:ring-blue-500"
                           />
                         </div>
+                      </div>
+
+                      {/* MoMo vs Airtime Category Filter Tabs */}
+                      <div className="flex gap-1 bg-slate-100 p-1 rounded-lg text-xs font-bold mb-3">
+                        <button
+                          type="button"
+                          onClick={() => setTxCategoryFilter("ALL")}
+                          className={`flex-1 py-1 px-2 rounded-md transition-all cursor-pointer text-center ${
+                            txCategoryFilter === "ALL" ? "bg-white text-slate-900 shadow-xs font-extrabold" : "text-slate-600 hover:text-slate-900"
+                          }`}
+                        >
+                          All ({transactions.length})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setTxCategoryFilter("MOMO")}
+                          className={`flex-1 py-1 px-2 rounded-md transition-all cursor-pointer flex items-center justify-center gap-1 ${
+                            txCategoryFilter === "MOMO" ? "bg-sky-600 text-white shadow-xs font-extrabold" : "text-slate-600 hover:text-slate-900"
+                          }`}
+                        >
+                          <span>💸 MoMo</span>
+                          <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${txCategoryFilter === "MOMO" ? "bg-sky-700 text-white" : "bg-slate-200 text-slate-700"}`}>
+                            {transactions.filter(t => t.type !== "airtime").length}
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setTxCategoryFilter("AIRTIME")}
+                          className={`flex-1 py-1 px-2 rounded-md transition-all cursor-pointer flex items-center justify-center gap-1 ${
+                            txCategoryFilter === "AIRTIME" ? "bg-emerald-600 text-white shadow-xs font-extrabold" : "text-slate-600 hover:text-slate-900"
+                          }`}
+                        >
+                          <span>📱 Airtime</span>
+                          <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${txCategoryFilter === "AIRTIME" ? "bg-emerald-700 text-white" : "bg-slate-200 text-slate-700"}`}>
+                            {transactions.filter(t => t.type === "airtime").length}
+                          </span>
+                        </button>
                       </div>
 
                       {/* Transaction mapping */}
@@ -4182,12 +5098,13 @@ if (res.status === 401) {
                                 )}
 
                                 {/* Reverse/Correct Button for Super Admin */}
-                                {currentUser?.role === "ADMIN" && t.status === "ACTIVE" && (
+                                {currentUser?.role === "ADMIN" && (
                                   <button
-                                    onClick={() => setSelectedTxForCorrection(t)}
-                                    className="block text-[9px] bg-red-50 hover:bg-red-100 text-red-700 px-2 py-0.5 rounded border border-red-200 mt-1.5 ml-auto font-bold cursor-pointer"
+                                    onClick={() => openCorrectionModal(t)}
+                                    className="block text-[9px] bg-amber-50 hover:bg-amber-100 text-amber-800 px-2 py-0.5 rounded border border-amber-200 mt-1.5 ml-auto font-extrabold cursor-pointer transition-all"
+                                    title="Admin: Correct transaction figures & auto-recalculate balances"
                                   >
-                                    Revert Ledger
+                                    ✏️ Correct
                                   </button>
                                 )}
                               </div>
@@ -4313,17 +5230,118 @@ if (res.status === 401) {
                       />
                     </div>
 
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700">Amount (GHS)</label>
+                        <input
+                          id="debt_amount"
+                          type="number"
+                          required
+                          min="0.01"
+                          step="0.01"
+                          value={newDebtAmt}
+                          onChange={(e) => setNewDebtAmt(e.target.value)}
+                          className="w-full px-3 py-1.5 border rounded text-xs font-bold text-navy-dark focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          placeholder="0.00"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 flex items-center justify-between">
+                          <span>Commission (GHS)</span>
+                          <span className="text-[10px] text-amber-700 font-normal">(Optional)</span>
+                        </label>
+                        <input
+                          id="debt_commission"
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={newDebtComm}
+                          onChange={(e) => setNewDebtComm(e.target.value)}
+                          className="w-full px-3 py-1.5 border border-amber-300 bg-amber-50/70 rounded text-xs font-bold text-amber-950 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                          placeholder="0.00"
+                        />
+                      </div>
+                    </div>
+
                     <div>
-                      <label className="block text-xs font-semibold text-slate-700">Amount (GHS)</label>
-                      <input
-                        id="debt_amount"
-                        type="number"
-                        required
-                        value={newDebtAmt}
-                        onChange={(e) => setNewDebtAmt(e.target.value)}
-                        className="w-full px-3 py-1.5 border rounded text-xs font-bold text-navy-dark focus:outline-none focus:ring-1 focus:ring-blue-500"
-                        placeholder="0.00"
-                      />
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        Disbursement / Collection Method
+                      </label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          id="debt_mode_cash_btn"
+                          onClick={() => setNewDebtPaymentMode("PHYSICAL_CASH")}
+                          className={`px-3 py-2 rounded-lg border text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                            newDebtPaymentMode === "PHYSICAL_CASH"
+                              ? "bg-emerald-600 text-white border-emerald-700 shadow-xs"
+                              : "bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100"
+                          }`}
+                        >
+                          <span>💵</span>
+                          <span>Physical Cash (Shop)</span>
+                        </button>
+                        <button
+                          type="button"
+                          id="debt_mode_momo_btn"
+                          onClick={() => setNewDebtPaymentMode("ELECTRONIC_MONEY")}
+                          className={`px-3 py-2 rounded-lg border text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                            newDebtPaymentMode === "ELECTRONIC_MONEY"
+                              ? "bg-purple-600 text-white border-purple-700 shadow-xs"
+                              : "bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100"
+                          }`}
+                        >
+                          <span>📱</span>
+                          <span>Electronic (MoMo)</span>
+                        </button>
+                      </div>
+
+                      {newDebtPaymentMode === "ELECTRONIC_MONEY" && (
+                        <div className="mt-2.5 p-2.5 bg-purple-50 border border-purple-200 rounded-lg space-y-1.5">
+                          <label className="block text-[11px] font-extrabold text-purple-900 uppercase tracking-wider">
+                            Select Disbursing MoMo Network
+                          </label>
+                          <div className="grid grid-cols-3 gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setNewDebtPaymentNetwork("MTN")}
+                              className={`py-1.5 px-2 rounded text-[11px] font-extrabold flex items-center justify-center gap-1 cursor-pointer transition-all ${
+                                newDebtPaymentNetwork === "MTN"
+                                  ? "bg-amber-500 text-slate-950 ring-2 ring-amber-600 font-black shadow-xs"
+                                  : "bg-white text-slate-700 border border-slate-200 hover:bg-slate-100"
+                              }`}
+                            >
+                              🟡 MTN
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setNewDebtPaymentNetwork("TELECEL")}
+                              className={`py-1.5 px-2 rounded text-[11px] font-extrabold flex items-center justify-center gap-1 cursor-pointer transition-all ${
+                                newDebtPaymentNetwork === "TELECEL"
+                                  ? "bg-red-600 text-white ring-2 ring-red-700 font-black shadow-xs"
+                                  : "bg-white text-slate-700 border border-slate-200 hover:bg-slate-100"
+                              }`}
+                            >
+                              🔴 Telecel
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setNewDebtPaymentNetwork("AIRTELTIGO")}
+                              className={`py-1.5 px-2 rounded text-[11px] font-extrabold flex items-center justify-center gap-1 cursor-pointer transition-all ${
+                                newDebtPaymentNetwork === "AIRTELTIGO"
+                                  ? "bg-blue-600 text-white ring-2 ring-blue-700 font-black shadow-xs"
+                                  : "bg-white text-slate-700 border border-slate-200 hover:bg-slate-100"
+                              }`}
+                            >
+                              🔵 AirtelTigo
+                            </button>
+                          </div>
+                          <span className="text-[10px] text-purple-800 font-medium block">
+                            System will deduct GHS {Number(newDebtAmt || 0).toLocaleString()} from selected network float wallet.
+                          </span>
+                        </div>
+                      )}
                     </div>
 
                     <div>
@@ -4374,15 +5392,148 @@ if (res.status === 401) {
                       <h4 className="font-bold text-xs uppercase tracking-wider text-slate-500">Consumer Debt Logs</h4>
                       <p className="text-[10px] text-slate-400 mt-0.5">Track, audit, and clear outstanding customer loan balances.</p>
                     </div>
-                    {currentUser?.role === "ADMIN" && selectedDebtIds.length > 0 && (
-                      <button
-                        id="bulk_clear_debts_btn"
-                        onClick={handleBulkClearDebts}
-                        className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-[11px] px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-sm transition-all cursor-pointer uppercase tracking-wider shrink-0 animate-pulse"
-                      >
-                        ✅ Bulk Clear {selectedDebtIds.length} Checked
-                      </button>
-                    )}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {/* Searchable Branch Filter Dropdown */}
+                      <div className="relative shrink-0">
+                        <button
+                          id="debt_branch_filter_btn"
+                          type="button"
+                          onClick={() => setIsDebtBranchSearchOpen(!isDebtBranchSearchOpen)}
+                          className="flex items-center gap-2 bg-slate-50 hover:bg-slate-100 border border-slate-250 text-slate-800 text-xs font-bold px-3 py-1.5 rounded-lg transition-all cursor-pointer shadow-xs"
+                        >
+                          <Building className="size-3.5 text-blue-600 shrink-0" />
+                          <span className="max-w-[140px] truncate">
+                            {debtBranchFilter === "all"
+                              ? "🌐 All Branches"
+                              : branches.find(b => b.id === debtBranchFilter)?.name || "Select Branch"}
+                          </span>
+                          <ChevronRight className={`size-3.5 text-slate-400 transition-transform duration-200 shrink-0 ${isDebtBranchSearchOpen ? "rotate-90" : ""}`} />
+                        </button>
+
+                        <AnimatePresence>
+                          {isDebtBranchSearchOpen && (
+                            <>
+                              {/* Click catcher background */}
+                              <div 
+                                className="fixed inset-0 z-40 bg-transparent" 
+                                onClick={() => {
+                                  setIsDebtBranchSearchOpen(false);
+                                  setDebtBranchSearchQuery("");
+                                }}
+                              />
+                              
+                              {/* Popover Dropdown */}
+                              <motion.div
+                                initial={{ opacity: 0, y: 8, scale: 0.95 }}
+                                animate={{ opacity: 1, y: 0, scale: 1 }}
+                                exit={{ opacity: 0, y: 8, scale: 0.95 }}
+                                transition={{ duration: 0.15, ease: "easeOut" }}
+                                className="absolute right-0 mt-1.5 z-50 bg-white border border-slate-200 rounded-lg shadow-xl p-2.5 w-72 origin-top-right"
+                              >
+                                <div className="relative mb-2">
+                                  <Search className="absolute left-2.5 top-2.5 size-4 text-slate-400" />
+                                  <input
+                                    type="text"
+                                    placeholder="Filter branch..."
+                                    value={debtBranchSearchQuery}
+                                    onChange={(e) => setDebtBranchSearchQuery(e.target.value)}
+                                    className="w-full pl-9 pr-8 py-1.5 text-xs border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500/40 text-slate-800"
+                                    autoFocus
+                                  />
+                                  {debtBranchSearchQuery && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setDebtBranchSearchQuery("")}
+                                      className="absolute right-2 top-2 text-slate-400 hover:text-slate-600"
+                                    >
+                                      <X className="size-3.5" />
+                                    </button>
+                                  )}
+                                </div>
+
+                                <div className="max-h-60 overflow-y-auto space-y-0.5 custom-scrollbar">
+                                  {("all branches consolidated".includes(debtBranchSearchQuery.toLowerCase().trim()) || debtBranchSearchQuery.trim() === "") && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setDebtBranchFilter("all");
+                                        setIsDebtBranchSearchOpen(false);
+                                        setDebtBranchSearchQuery("");
+                                      }}
+                                      className={`w-full text-left px-3 py-2 text-xs font-semibold rounded-md flex items-center justify-between transition-colors ${
+                                        debtBranchFilter === "all"
+                                          ? "bg-blue-500 text-white font-bold"
+                                          : "text-slate-700 hover:bg-slate-100"
+                                      }`}
+                                    >
+                                      <span>🌐 All Branches Consolidated</span>
+                                      {debtBranchFilter === "all" && <CheckCircle className="size-3.5 shrink-0" />}
+                                    </button>
+                                  )}
+                                  
+                                  {branches
+                                    .filter(b => b.name.toLowerCase().includes(debtBranchSearchQuery.toLowerCase().trim()))
+                                    .map((b, idx) => {
+                                      const getBranchEmoji = (name: string, i: number) => {
+                                        const lower = name.toLowerCase();
+                                        if (lower.includes("accra") || lower.includes("mall")) return "🛍️";
+                                        if (lower.includes("kumasi") || lower.includes("kejetia")) return "🕌";
+                                        if (lower.includes("takoradi") || lower.includes("circle")) return "⚓";
+                                        if (lower.includes("office") || lower.includes("head")) return "🏢";
+                                        if (lower.includes("main")) return "🏛️";
+                                        const ems = ["🏬", "🏪", "🏫", "🏗️", "🛖", "🏡", "🏠"];
+                                        return ems[i % ems.length];
+                                      };
+                                      const emoji = getBranchEmoji(b.name, idx);
+                                      const isSelected = debtBranchFilter === b.id;
+                                      
+                                      return (
+                                        <button
+                                          key={b.id}
+                                          type="button"
+                                          onClick={() => {
+                                            setDebtBranchFilter(b.id);
+                                            setIsDebtBranchSearchOpen(false);
+                                            setDebtBranchSearchQuery("");
+                                          }}
+                                          className={`w-full text-left px-3 py-2 text-xs font-semibold rounded-md flex items-center justify-between transition-colors ${
+                                            isSelected
+                                              ? "bg-blue-500 text-white font-bold"
+                                              : "text-slate-700 hover:bg-slate-100"
+                                          }`}
+                                        >
+                                          <span className="flex items-center gap-1.5">
+                                            <span>{emoji}</span>
+                                            <span>{b.name}</span>
+                                          </span>
+                                          {isSelected && <CheckCircle className="size-3.5 shrink-0" />}
+                                        </button>
+                                      );
+                                    })}
+                                  
+                                  {branches.filter(b => b.name.toLowerCase().includes(debtBranchSearchQuery.toLowerCase().trim())).length === 0 && 
+                                    !("all branches consolidated".includes(debtBranchSearchQuery.toLowerCase().trim()) || debtBranchSearchQuery.trim() === "") && (
+                                    <div className="text-center py-4 text-slate-400 text-xs">
+                                      No branches match "{debtBranchSearchQuery}"
+                                    </div>
+                                  )}
+                                </div>
+                              </motion.div>
+                            </>
+                          )}
+                        </AnimatePresence>
+                      </div>
+
+                      {currentUser?.role === "ADMIN" && selectedDebtIds.length > 0 && (
+                        <button
+                          id="bulk_clear_debts_btn"
+                          onClick={() => setIsBulkClearConfirmOpen(true)}
+                          className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-[11px] px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-sm transition-all cursor-pointer uppercase tracking-wider shrink-0 animate-pulse"
+                        >
+                          ✅ Bulk Clear {selectedDebtIds.length} Checked
+                        </button>
+                      )}
+                    </div>
                   </div>
                   
                   <div className="overflow-x-auto">
@@ -4395,13 +5546,13 @@ if (res.status === 401) {
                                 id="select_all_outstanding_debts_chk"
                                 type="checkbox"
                                 checked={
-                                  debts.length > 0 &&
-                                  debts.filter(d => d.status === "OUTSTANDING").length > 0 &&
-                                  debts.filter(d => d.status === "OUTSTANDING").every(d => selectedDebtIds.includes(d.id))
+                                  filteredDebts.length > 0 &&
+                                  filteredDebts.filter(d => d.status === "OUTSTANDING").length > 0 &&
+                                  filteredDebts.filter(d => d.status === "OUTSTANDING").every(d => selectedDebtIds.includes(d.id))
                                 }
                                 onChange={(e) => {
                                   if (e.target.checked) {
-                                    const outstandingIds = debts.filter(d => d.status === "OUTSTANDING").map(d => d.id);
+                                    const outstandingIds = filteredDebts.filter(d => d.status === "OUTSTANDING").map(d => d.id);
                                     setSelectedDebtIds(outstandingIds);
                                   } else {
                                     setSelectedDebtIds([]);
@@ -4415,7 +5566,9 @@ if (res.status === 401) {
                           <th className="p-3">Customer</th>
                           {currentUser?.role === "ADMIN" && <th className="p-3">Branch</th>}
                           <th className="p-3">Amount</th>
-                          <th className="p-3">Logged By</th>
+                          <th className="p-3">Commission</th>
+                          <th className="p-3">Cash / MoMo Source</th>
+                          <th className="p-3">Logged By & Entry Time</th>
                           <th className="p-3">Due Date</th>
                           <th className="p-3">Reason</th>
                           <th className="p-3">Status</th>
@@ -4423,8 +5576,8 @@ if (res.status === 401) {
                         </tr>
                       </thead>
                       <tbody>
-                        {debts.length > 0 ? (
-                          debts.map((d, index) => {
+                        {filteredDebts.length > 0 ? (
+                          filteredDebts.map((d, index) => {
                             const isOverdue = d.status === "OUTSTANDING" && (() => {
                               const today = new Date();
                               today.setHours(0, 0, 0, 0);
@@ -4474,8 +5627,62 @@ if (res.status === 401) {
                                     </span>
                                   </td>
                                 )}
-                                <td className={`p-3 font-bold font-mono text-sm ${showWarning ? "text-red-700" : "text-slate-800"}`}>₵{d.amount}</td>
-                                <td className="p-3 text-slate-500 text-[11px]">{d.recordedByUserName}</td>
+                                <td className={`p-3 font-bold font-mono text-sm ${showWarning ? "text-red-700" : "text-slate-800"}`}>
+                                  ₵{Number(d.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </td>
+                                <td className="p-3 font-bold font-mono text-xs text-amber-700">
+                                  ₵{Number(d.commission || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </td>
+                                <td className="p-3">
+                                  {d.paymentMode === "ELECTRONIC_MONEY" ? (
+                                    <span className="inline-flex items-center gap-1 bg-purple-100 text-purple-900 border border-purple-200 px-2 py-0.5 rounded text-[10px] font-extrabold uppercase shrink-0" title={`Disbursed via ${d.paymentNetwork || "MoMo"}`}>
+                                      📱 {d.paymentNetwork ? d.paymentNetwork : "E-Money"}
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-900 border border-emerald-200 px-2 py-0.5 rounded text-[10px] font-extrabold uppercase shrink-0" title="Disbursed via Physical Cash from Shop">
+                                      💵 Shop Cash
+                                    </span>
+                                  )}
+                                  {d.status === "PAID" && d.clearedPaymentMode && (
+                                    <p className="text-[9.5px] font-extrabold text-emerald-700 mt-0.5 whitespace-nowrap" title="Repayment collection method">
+                                      Repaid: {d.clearedPaymentMode === "ELECTRONIC_MONEY" ? `📱 ${d.clearedPaymentNetwork || "MoMo"}` : "💵 Cash"}
+                                    </p>
+                                  )}
+                                  {d.status === "CANCELLED" && d.clearedPaymentMode && (
+                                    <p className="text-[9.5px] font-extrabold text-red-600 mt-0.5 whitespace-nowrap" title="Cancellation method">
+                                      Cancelled: {d.clearedPaymentMode === "ELECTRONIC_MONEY" ? `📱 ${d.clearedPaymentNetwork || "MoMo"}` : "💵 Cash"}
+                                    </p>
+                                  )}
+                                </td>
+                                <td className="p-3">
+                                  <p className="font-semibold text-slate-700 text-[11px]">{d.recordedByUserName}</p>
+                                  {(() => {
+                                    let dateObj: Date | null = null;
+                                    if (d.createdAt) {
+                                      dateObj = new Date(d.createdAt);
+                                    } else if (d.id && d.id.startsWith("debt-")) {
+                                      const timestampNum = parseInt(d.id.replace("debt-", ""), 10);
+                                      if (!isNaN(timestampNum) && timestampNum > 1000000000) {
+                                        dateObj = new Date(timestampNum);
+                                      }
+                                    }
+                                    if (!dateObj || isNaN(dateObj.getTime())) return null;
+                                    const formattedStr = dateObj.toLocaleDateString("en-GB", {
+                                      day: "2-digit",
+                                      month: "short",
+                                      year: "numeric"
+                                    }) + " " + dateObj.toLocaleTimeString("en-US", {
+                                      hour: "2-digit",
+                                      minute: "2-digit",
+                                      hour12: true
+                                    });
+                                    return (
+                                      <p className="text-[10px] text-slate-400 font-mono mt-0.5" title="Date & Time Entered">
+                                        ⏱️ {formattedStr}
+                                      </p>
+                                    );
+                                  })()}
+                                </td>
                                 <td className="p-3 font-semibold text-[11px]">
                                   {showWarning ? (
                                     <div className="flex flex-col">
@@ -4494,18 +5701,44 @@ if (res.status === 401) {
                                     ) : (
                                       <span className="bg-amber-100 text-amber-800 font-extrabold px-2 py-0.5 rounded text-[9px] uppercase">Outstanding</span>
                                     )
+                                  ) : d.status === "CANCELLED" ? (
+                                    <span className="bg-red-100 text-red-800 font-extrabold px-2 py-0.5 rounded text-[9px] uppercase">Cancelled</span>
                                   ) : (
                                     <span className="bg-emerald-100 text-emerald-800 font-extrabold px-2 py-0.5 rounded text-[9px] uppercase">Cleared</span>
                                   )}
                                 </td>
                                 <td className="p-3">
                                   {d.status === "OUTSTANDING" ? (
-                                    <button
-                                      onClick={() => handleClearDebt(d.id)}
-                                      className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded text-[10px] cursor-pointer transition-colors flex items-center gap-1 shadow-sm active:scale-95"
-                                    >
-                                      <span>Paid ✔</span>
-                                    </button>
+                                    <div className="flex items-center gap-1.5">
+                                      <button
+                                        onClick={() => {
+                                          setDebtToClear(d);
+                                          setDebtClearPaymentMode("PHYSICAL_CASH");
+                                          setDebtClearPaymentNetwork("MTN");
+                                        }}
+                                        className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold px-2.5 py-1.5 rounded text-[10px] cursor-pointer transition-colors flex items-center gap-1 shadow-xs active:scale-95"
+                                        title="Settle / Pay Debt"
+                                      >
+                                        <span>Paid ✔</span>
+                                      </button>
+                                      <button
+                                        onClick={() => {
+                                          setDebtToCancel(d);
+                                          setDebtCancelMode("PHYSICAL_CASH");
+                                          setDebtCancelNetwork("MTN");
+                                          setDebtCancelReason("");
+                                        }}
+                                        className="bg-red-600 hover:bg-red-700 text-white font-extrabold px-2.5 py-1.5 rounded text-[10px] cursor-pointer transition-colors flex items-center gap-1 shadow-xs active:scale-95"
+                                        title="Cancel / Void Debt"
+                                      >
+                                        <span>Cancel ✖</span>
+                                      </button>
+                                    </div>
+                                  ) : d.status === "CANCELLED" ? (
+                                    <div className="text-[9px] text-red-600">
+                                      <p className="font-bold">Cancelled by</p>
+                                      <p className="font-semibold text-slate-800">{d.clearedByUserName}</p>
+                                    </div>
                                   ) : (
                                     <div className="text-[9px] text-slate-400">
                                       <p>Cleared by</p>
@@ -4518,7 +5751,7 @@ if (res.status === 401) {
                           })
                         ) : (
                           <tr>
-                            <td colSpan={currentUser?.role === "ADMIN" ? 9 : 7} className="text-center py-6 text-slate-400">No debts tracked at this branch yet.</td>
+                            <td colSpan={currentUser?.role === "ADMIN" ? 10 : 8} className="text-center py-6 text-slate-400">No debts tracked for this branch yet.</td>
                           </tr>
                         )}
                       </tbody>
@@ -4625,27 +5858,42 @@ if (res.status === 401) {
                             </span>
                           </div>
                           <h4 className="text-xs font-bold text-slate-200">Historical MOMO & Airtime Entries</h4>
-                          <p className="text-[11px] text-slate-400 mt-1 mb-4">
-                            Includes absolute ID, operator records, commissions, statuses, and custom client/recipient telephone data.
+                          <p className="text-[11px] text-slate-400 mt-1 mb-3">
+                            Includes absolute ID, operator records, commissions, statuses, and custom telephone numbers.
                           </p>
                         </div>
-                        <button
-                          onClick={handleExportTransactionsCSV}
-                          disabled={isExportingTxs}
-                          className="w-full flex items-center justify-center gap-1.5 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-600/50 text-white text-xs font-bold rounded shadow transition-all cursor-pointer"
-                        >
-                          {isExportingTxs ? (
-                            <>
+                        <div className="space-y-1.5">
+                          <button
+                            onClick={() => handleExportTransactionsCSV("ALL")}
+                            disabled={isExportingTxs}
+                            className="w-full flex items-center justify-center gap-1.5 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-600/50 text-white text-[11px] font-bold rounded shadow transition-all cursor-pointer"
+                          >
+                            {isExportingTxs ? (
                               <RefreshCw className="size-3.5 animate-spin" />
-                              <span>Exporting...</span>
-                            </>
-                          ) : (
-                            <>
+                            ) : (
                               <Download className="size-3.5" />
-                              <span>Download Transactions ({transactions.length})</span>
-                            </>
-                          )}
-                        </button>
+                            )}
+                            <span>All Transactions ({transactions.length})</span>
+                          </button>
+                          <div className="grid grid-cols-2 gap-1.5">
+                            <button
+                              onClick={() => handleExportTransactionsCSV("MOMO")}
+                              disabled={isExportingTxs}
+                              className="flex items-center justify-center gap-1 py-1.5 bg-sky-700 hover:bg-sky-600 disabled:bg-sky-700/50 text-white text-[10px] font-bold rounded transition-all cursor-pointer"
+                            >
+                              <Download className="size-3" />
+                              <span>MoMo Only ({transactions.filter(t => t.type !== "airtime").length})</span>
+                            </button>
+                            <button
+                              onClick={() => handleExportTransactionsCSV("AIRTIME")}
+                              disabled={isExportingTxs}
+                              className="flex items-center justify-center gap-1 py-1.5 bg-emerald-700 hover:bg-emerald-600 disabled:bg-emerald-700/50 text-white text-[10px] font-bold rounded transition-all cursor-pointer"
+                            >
+                              <Download className="size-3" />
+                              <span>Airtime Only ({transactions.filter(t => t.type === "airtime").length})</span>
+                            </button>
+                          </div>
+                        </div>
                       </div>
 
                       {/* DEBTS CARD */}
@@ -4802,6 +6050,18 @@ if (res.status === 401) {
                           <span>Drawer Shortage:</span>
                           <span className="font-mono">GHS {c.difference}</span>
                         </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedReportForPrint(c);
+                            setIsShiftReportDialogueOpen(true);
+                          }}
+                          className="w-full mt-1.5 py-1.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-800 text-[11px] font-bold rounded-lg border border-slate-300 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <Printer className="size-3.5 text-slate-600" />
+                          <span>Print Day's Shift Report</span>
+                        </button>
                       </div>
                     ))
                   ) : (
@@ -4859,8 +6119,24 @@ if (res.status === 401) {
                   </div>
 
                   {closingSuccess && (
-                    <div className="bg-emerald-100 border border-emerald-250 p-4 rounded-xl text-xs space-y-2">
-                      <p className="font-bold text-center text-emerald-900">SHIFT RECORDED AS CLOSED PERMANENTLY</p>
+                    <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-xl text-xs space-y-3">
+                      <div className="flex items-center justify-between">
+                        <p className="font-extrabold text-emerald-900 flex items-center gap-1.5">
+                          <CheckCircle className="size-4 text-emerald-600" />
+                          <span>SHIFT RECORDED AS CLOSED PERMANENTLY</span>
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedReportForPrint(closingSuccess);
+                            setIsShiftReportDialogueOpen(true);
+                          }}
+                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg shadow-sm flex items-center gap-1.5 text-[11px] cursor-pointer"
+                        >
+                          <Printer className="size-3.5" />
+                          <span>Print Day's Report</span>
+                        </button>
+                      </div>
                       <div className="font-mono grid grid-cols-2 gap-1 text-slate-700">
                         <span>Expected Cash Drawer Balance:</span>
                         <span className="text-right font-bold">GHS {closingSuccess.expectedCash}</span>
@@ -4879,6 +6155,8 @@ if (res.status === 401) {
                         id="open_cash_val"
                         type="number"
                         required
+                        step="0.01"
+                        min="0"
                         value={openingCash}
                         onChange={(e) => setOpeningCash(e.target.value)}
                         className="w-full mt-1 px-3 py-2.5 border rounded-lg text-sm font-bold text-navy-dark focus:outline-none focus:ring-1 focus:ring-blue-500"
@@ -4893,6 +6171,8 @@ if (res.status === 401) {
                           id="open_mtn_float"
                           type="number"
                           required
+                          step="0.01"
+                          min="0"
                           value={openingMtn}
                           onChange={(e) => setOpeningMtn(e.target.value)}
                           className="w-full mt-1 px-3 py-2 border rounded text-xs font-mono text-center font-bold"
@@ -4905,6 +6185,8 @@ if (res.status === 401) {
                           id="open_tel_float"
                           type="number"
                           required
+                          step="0.01"
+                          min="0"
                           value={openingTelecel}
                           onChange={(e) => setOpeningTelecel(e.target.value)}
                           className="w-full mt-1 px-3 py-2 border rounded text-xs font-mono text-center font-bold"
@@ -4917,6 +6199,8 @@ if (res.status === 401) {
                           id="open_art_float"
                           type="number"
                           required
+                          step="0.01"
+                          min="0"
                           value={openingAirtel}
                           onChange={(e) => setOpeningAirtel(e.target.value)}
                           className="w-full mt-1 px-3 py-2 border rounded text-xs font-mono text-center font-bold"
@@ -4961,26 +6245,84 @@ if (res.status === 401) {
                   </div>
 
                   <form onSubmit={handleCloseShiftSubmit} className="space-y-4">
+                    <div className="bg-amber-50 border border-amber-200 text-amber-900 rounded-lg p-3 text-xs font-semibold flex items-start gap-2">
+                      <AlertTriangle className="size-4 text-amber-700 shrink-0 mt-0.5" />
+                      <div>
+                        <strong>Mandatory Closing Reconciliation:</strong> All workers must enter all closing figures (Cash + Floats) before shift can be closed. The system will compare your entries against calculated expectations and trigger immediate alarm notifications to the admin if figures do not match.
+                      </div>
+                    </div>
+
                     <div>
-                      <label className="block text-xs font-bold text-slate-600 uppercase">Actual Physical Cash Counted (GHS)</label>
+                      <label className="block text-xs font-bold text-slate-700 uppercase">1. Actual Physical Cash Counted (GHS)</label>
                       <input
                         id="actual_counted_val"
                         type="number"
                         required
+                        step="0.01"
+                        min="0"
                         value={actualCash}
                         onChange={(e) => setActualCash(e.target.value)}
                         className="w-full mt-1 px-3 py-2.5 border rounded-lg text-lg font-bold text-blue-900 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                        placeholder="Count drawers, enter cash value..."
+                        placeholder="Count physical drawer cash..."
                       />
-                      <span className="text-[10px] text-slate-400 mt-1 block">Math formulas automatically compile expected figures on click.</span>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="block text-xs font-bold text-slate-700 uppercase">2. Closing Float Figures (Counted)</label>
+                      <div className="grid grid-cols-3 gap-3">
+                        <div>
+                          <label className="block text-[10px] font-bold text-amber-700 uppercase">MTN Float (GHS)</label>
+                          <input
+                            id="actual_mtn_float"
+                            type="number"
+                            required
+                            step="0.01"
+                            min="0"
+                            value={actualMtn}
+                            onChange={(e) => setActualMtn(e.target.value)}
+                            className="w-full mt-1 px-3 py-2 border rounded-lg text-xs font-mono text-center font-bold text-slate-900 focus:ring-1 focus:ring-amber-500"
+                            placeholder="MTN Float"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-red-700 uppercase">Telecel Float (GHS)</label>
+                          <input
+                            id="actual_tel_float"
+                            type="number"
+                            required
+                            step="0.01"
+                            min="0"
+                            value={actualTelecel}
+                            onChange={(e) => setActualTelecel(e.target.value)}
+                            className="w-full mt-1 px-3 py-2 border rounded-lg text-xs font-mono text-center font-bold text-slate-900 focus:ring-1 focus:ring-red-500"
+                            placeholder="Telecel Float"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-blue-700 uppercase">AirtelTigo Float (GHS)</label>
+                          <input
+                            id="actual_art_float"
+                            type="number"
+                            required
+                            step="0.01"
+                            min="0"
+                            value={actualAirtel}
+                            onChange={(e) => setActualAirtel(e.target.value)}
+                            className="w-full mt-1 px-3 py-2 border rounded-lg text-xs font-mono text-center font-bold text-slate-900 focus:ring-1 focus:ring-blue-500"
+                            placeholder="AirtelTigo Float"
+                          />
+                        </div>
+                      </div>
+                      <span className="text-[10px] text-slate-400 mt-1 block">Ensure all balances match physical phone wallets before submitting.</span>
                     </div>
 
                     <button
                       id="submit_close_shift_btn"
                       type="submit"
-                      className="w-full py-2.5 px-4 bg-red-600 hover:bg-red-750 text-white font-bold text-xs uppercase tracking-wider rounded-lg shadow-all transition-all cursor-pointer"
+                      className="w-full py-3 px-4 bg-red-600 hover:bg-red-700 text-white font-extrabold text-xs uppercase tracking-wider rounded-xl shadow-md transition-all cursor-pointer flex items-center justify-center gap-2"
                     >
-                      🔐 Close Shift & Save Report Permanently
+                      <Lock className="size-4" />
+                      <span>🔐 Validate Closing Figures & Close Shift</span>
                     </button>
                   </form>
                 </div>
@@ -5189,6 +6531,8 @@ if (res.status === 401) {
                   <div className="flex items-center gap-1.5">
                     <input
                       type="number"
+                      step="0.01"
+                      min="0"
                       placeholder="Alarm Limit (GHS)..."
                       value={thresholdVal}
                       onChange={(e) => setThresholdVal(e.target.value)}
@@ -5227,6 +6571,8 @@ if (res.status === 401) {
                             <span className="text-xs font-semibold text-slate-500 w-16 text-right">MTN</span>
                             <input
                               type="number"
+                              step="0.01"
+                              min="0"
                               value={stateValues.mtn}
                               onChange={(e) => {
                                 setCustomFloats({
@@ -5242,6 +6588,8 @@ if (res.status === 401) {
                             <span className="text-xs font-semibold text-slate-500 w-16 text-right">Telecel</span>
                             <input
                               type="number"
+                              step="0.01"
+                              min="0"
                               value={stateValues.tel}
                               onChange={(e) => {
                                 setCustomFloats({
@@ -5257,6 +6605,8 @@ if (res.status === 401) {
                             <span className="text-xs font-semibold text-slate-500 w-16 text-right">AirtelTigo</span>
                             <input
                               type="number"
+                              step="0.01"
+                              min="0"
                               value={stateValues.art}
                               onChange={(e) => {
                                 setCustomFloats({
@@ -5287,6 +6637,8 @@ if (res.status === 401) {
                             <span className="text-xs font-semibold text-slate-500 w-16 text-right">MTN</span>
                             <input
                               type="number"
+                              step="0.01"
+                              min="0"
                               value={airtimeValues.mtn}
                               onChange={(e) => {
                                 setCustomAirtimeFloats({
@@ -5302,6 +6654,8 @@ if (res.status === 401) {
                             <span className="text-xs font-semibold text-slate-500 w-16 text-right">Telecel</span>
                             <input
                               type="number"
+                              step="0.01"
+                              min="0"
                               value={airtimeValues.tel}
                               onChange={(e) => {
                                 setCustomAirtimeFloats({
@@ -5317,6 +6671,8 @@ if (res.status === 401) {
                             <span className="text-xs font-semibold text-slate-500 w-16 text-right">AirtelTigo</span>
                             <input
                               type="number"
+                              step="0.01"
+                              min="0"
                               value={airtimeValues.art}
                               onChange={(e) => {
                                 setCustomAirtimeFloats({
@@ -5360,7 +6716,7 @@ if (res.status === 401) {
                 </div>
                 <div className="flex flex-wrap gap-2 shrink-0">
                   <button
-                    onClick={handleExportTransactionsCSV}
+                    onClick={() => handleExportTransactionsCSV("ALL")}
                     disabled={isExportingTxs}
                     className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 disabled:opacity-50 text-[11px] font-semibold rounded border border-slate-300 cursor-pointer transition-all"
                     title="Export all historical transaction rows as a clean CSV table"
@@ -6071,6 +7427,1494 @@ if (res.status === 401) {
           })}
         </AnimatePresence>
       </div>
+
+      {/* SINGLE DEBT CLEARANCE CONFIRMATION MODAL */}
+      <AnimatePresence>
+        {debtToClear && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            {/* Overlay Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setDebtToClear(null)}
+              className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs"
+            />
+
+            {/* Dialog Card */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 16 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 16 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              className="relative bg-white border border-slate-200 rounded-2xl shadow-2xl max-w-md w-full p-6 z-10 overflow-hidden"
+            >
+              <div className="flex items-start justify-between pb-3 border-b border-slate-100">
+                <div className="flex items-center gap-3">
+                  <div className="size-10 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 ring-4 ring-emerald-50">
+                    <CheckCircle className="size-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-extrabold text-navy-dark">Confirm Debt Settlement</h3>
+                    <p className="text-xs text-slate-500">Verify details before approving loan payoff</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setDebtToClear(null)}
+                  className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+                >
+                  <X className="size-5" />
+                </button>
+              </div>
+
+              {/* Debt Details Summary Box */}
+              <div className="mt-4 bg-slate-50 border border-slate-200/80 rounded-xl p-4 space-y-2 text-xs">
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500 font-medium">Debtor / Customer:</span>
+                  <span className="font-bold text-slate-900 text-sm">{debtToClear.customerName}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500 font-medium">Contact Number:</span>
+                  <span className="font-mono text-slate-700 font-semibold">{debtToClear.customerNumber}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500 font-medium">Branch Outlet:</span>
+                  <span className="font-semibold text-slate-800">
+                    {branches.find(b => b.id === debtToClear.branchId)?.name || debtToClear.branchId}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500 font-medium">Original Issue Source:</span>
+                  <span className={`font-bold text-[11px] uppercase px-2 py-0.5 rounded ${
+                    debtToClear.paymentMode === "ELECTRONIC_MONEY"
+                      ? "bg-purple-100 text-purple-900 border border-purple-200"
+                      : "bg-emerald-100 text-emerald-900 border border-emerald-200"
+                  }`}>
+                    {debtToClear.paymentMode === "ELECTRONIC_MONEY" ? "📱 Electronic (MoMo)" : "💵 Physical Cash (Shop)"}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center pt-2 border-t border-slate-200/60">
+                  <span className="text-slate-500 font-medium">Total Outstanding Amount:</span>
+                  <span className="font-mono font-extrabold text-emerald-700 text-base">
+                    ₵{debtToClear.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+                {debtToClear.reason && (
+                  <div className="pt-2 border-t border-slate-200/60">
+                    <span className="text-slate-500 font-medium block">Reason / Description:</span>
+                    <p className="text-slate-700 font-medium italic mt-0.5 bg-white p-2 rounded border border-slate-200/60">{debtToClear.reason}</p>
+                  </div>
+                )}
+                
+                <div className="pt-3 border-t border-slate-200/60">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                    How was this debt collected/repaid?
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setDebtClearPaymentMode("PHYSICAL_CASH")}
+                      className={`px-3 py-2 rounded-lg border text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                        debtClearPaymentMode === "PHYSICAL_CASH"
+                          ? "bg-emerald-600 text-white border-emerald-700 shadow-xs"
+                          : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
+                      }`}
+                    >
+                      <span>💵</span>
+                      <span>Physical Cash</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDebtClearPaymentMode("ELECTRONIC_MONEY")}
+                      className={`px-3 py-2 rounded-lg border text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                        debtClearPaymentMode === "ELECTRONIC_MONEY"
+                          ? "bg-purple-600 text-white border-purple-700 shadow-xs"
+                          : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
+                      }`}
+                    >
+                      <span>📱</span>
+                      <span>Electronic (MoMo)</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <p className="mt-4 text-xs text-slate-600 leading-relaxed bg-amber-50/80 border border-amber-200/60 rounded-lg p-3 text-amber-900">
+                ⚠️ <strong>Notice:</strong> Confirming this payoff will mark the debt status as <strong>PAID</strong>, credit the user audit trail, and update debt balances.
+              </p>
+
+              {/* Action Buttons */}
+              <div className="mt-6 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setDebtToClear(null)}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const id = debtToClear.id;
+                    setDebtToClear(null);
+                    handleClearDebt(id, debtClearPaymentMode);
+                  }}
+                  className="px-5 py-2 text-xs font-extrabold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-md shadow-emerald-600/20 transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  <CheckCircle className="size-4" />
+                  <span>Confirm & Clear Debt</span>
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* BULK DEBT CLEARANCE CONFIRMATION MODAL */}
+      <AnimatePresence>
+        {isBulkClearConfirmOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            {/* Overlay Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsBulkClearConfirmOpen(false)}
+              className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs"
+            />
+
+            {/* Dialog Card */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 16 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 1, y: 0 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              className="relative bg-white border border-slate-200 rounded-2xl shadow-2xl max-w-md w-full p-6 z-10 overflow-hidden"
+            >
+              <div className="flex items-start justify-between pb-3 border-b border-slate-100">
+                <div className="flex items-center gap-3">
+                  <div className="size-10 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 ring-4 ring-emerald-50">
+                    <CheckCircle className="size-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-extrabold text-navy-dark">Confirm Bulk Debt Settlement</h3>
+                    <p className="text-xs text-slate-500">Mass payoff authorization for selected records</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsBulkClearConfirmOpen(false)}
+                  className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+                >
+                  <X className="size-5" />
+                </button>
+              </div>
+
+              {/* Bulk Summary Card */}
+              <div className="mt-4 bg-slate-50 border border-slate-200/80 rounded-xl p-4 space-y-3 text-xs">
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500 font-medium">Debts Selected:</span>
+                  <span className="font-bold text-slate-900 bg-emerald-100 text-emerald-800 px-2.5 py-0.5 rounded-full text-xs">
+                    {selectedDebtIds.length} Checked Items
+                  </span>
+                </div>
+                <div className="flex justify-between items-center pt-2 border-t border-slate-200/60">
+                  <span className="text-slate-500 font-medium">Combined Amount:</span>
+                  <span className="font-mono font-extrabold text-emerald-700 text-lg">
+                    ₵{debts
+                      .filter(d => selectedDebtIds.includes(d.id))
+                      .reduce((sum, d) => sum + d.amount, 0)
+                      .toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+                
+                <div className="pt-2 border-t border-slate-200/60">
+                  <span className="text-slate-500 font-medium block mb-1">Debtor Summary Preview:</span>
+                  <div className="max-h-28 overflow-y-auto space-y-1 custom-scrollbar pr-1">
+                    {debts
+                      .filter(d => selectedDebtIds.includes(d.id))
+                      .slice(0, 5)
+                      .map(d => (
+                        <div key={d.id} className="flex justify-between items-center text-[11px] bg-white p-1.5 rounded border border-slate-200/60">
+                          <span className="font-semibold text-slate-800 truncate max-w-[180px]">{d.customerName} ({d.customerNumber})</span>
+                          <span className="font-mono font-bold text-emerald-700">₵{d.amount}</span>
+                        </div>
+                      ))}
+                    {selectedDebtIds.length > 5 && (
+                      <p className="text-[10px] text-slate-400 text-center italic pt-1">
+                        ...and {selectedDebtIds.length - 5} more checked debts
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <p className="mt-4 text-xs text-slate-600 leading-relaxed bg-amber-50/80 border border-amber-200/60 rounded-lg p-3 text-amber-900">
+                ⚠️ <strong>Mass Action Warning:</strong> This will clear all <strong>{selectedDebtIds.length}</strong> selected debt entries permanently in bulk.
+              </p>
+
+              {/* Action Buttons */}
+              <div className="mt-6 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setIsBulkClearConfirmOpen(false)}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsBulkClearConfirmOpen(false);
+                    handleBulkClearDebts();
+                  }}
+                  className="px-5 py-2 text-xs font-extrabold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-md shadow-emerald-600/20 transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  <CheckCircle className="size-4" />
+                  <span>Confirm Bulk Clearance</span>
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* TRANSACTION EXECUTION CONFIRMATION MODAL */}
+      <AnimatePresence>
+        {pendingTxConfirmPayload && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setPendingTxConfirmPayload(null)}
+              className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 16 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 16 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              className="relative bg-white border border-slate-200 rounded-2xl shadow-2xl max-w-md w-full p-6 z-10 overflow-hidden"
+            >
+              <div className="flex items-start justify-between pb-3 border-b border-slate-100">
+                <div className="flex items-center gap-3">
+                  <div className="size-10 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center shrink-0 ring-4 ring-blue-50">
+                    <CheckCircle className="size-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-extrabold text-navy-dark">Confirm Transaction</h3>
+                    <p className="text-xs text-slate-500">Please review details before executing</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setPendingTxConfirmPayload(null)}
+                  className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+                >
+                  <X className="size-5" />
+                </button>
+              </div>
+
+              <div className="mt-4 bg-slate-50 border border-slate-200/80 rounded-xl p-4 space-y-2.5 text-xs">
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500 font-medium">Transaction Category:</span>
+                  <span className="font-extrabold uppercase bg-blue-100 text-blue-900 px-2 py-0.5 rounded text-[11px]">
+                    {pendingTxConfirmPayload.type?.replace("_", " ")}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500 font-medium">Network Provider:</span>
+                  <span className="font-bold text-slate-800 uppercase">{pendingTxConfirmPayload.network || "N/A"}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500 font-medium">Customer Handset:</span>
+                  <span className="font-mono font-bold text-slate-900 text-sm">{pendingTxConfirmPayload.customerNumber}</span>
+                </div>
+                <div className="flex justify-between items-center pt-2 border-t border-slate-200/60">
+                  <span className="text-slate-500 font-medium">Amount:</span>
+                  <span className="font-mono font-extrabold text-blue-700 text-lg">
+                    ₵{Number(pendingTxConfirmPayload.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+                {pendingTxConfirmPayload.commission !== undefined && (
+                  <div className="flex justify-between items-center text-[11px]">
+                    <span className="text-slate-500 font-medium">Earned Commission:</span>
+                    <span className="font-mono font-bold text-emerald-600">
+                      ₵{Number(pendingTxConfirmPayload.commission).toFixed(2)}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              <p className="mt-4 text-xs text-slate-600 leading-relaxed bg-blue-50/80 border border-blue-200/60 rounded-lg p-3 text-blue-900">
+                🔒 <strong>Safety Check:</strong> Verify the customer phone number and amount. Once confirmed, cash balances and float logs will update immediately.
+              </p>
+
+              <div className="mt-6 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setPendingTxConfirmPayload(null)}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={executeConfirmedTransaction}
+                  className="px-5 py-2 text-xs font-extrabold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-md shadow-blue-600/20 transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  <CheckCircle className="size-4" />
+                  <span>Confirm & Execute</span>
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ADD DEBT LOG CONFIRMATION MODAL */}
+      <AnimatePresence>
+        {pendingDebtConfirmPayload && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setPendingDebtConfirmPayload(null)}
+              className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 16 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 16 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              className="relative bg-white border border-slate-200 rounded-2xl shadow-2xl max-w-md w-full p-6 z-10 overflow-hidden"
+            >
+              <div className="flex items-start justify-between pb-3 border-b border-slate-100">
+                <div className="flex items-center gap-3">
+                  <div className="size-10 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center shrink-0 ring-4 ring-amber-50">
+                    <CheckCircle className="size-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-extrabold text-navy-dark">Confirm New Debt Entry</h3>
+                    <p className="text-xs text-slate-500">Verify debtor log parameters before saving</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setPendingDebtConfirmPayload(null)}
+                  className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+                >
+                  <X className="size-5" />
+                </button>
+              </div>
+
+              <div className="mt-4 bg-slate-50 border border-slate-200/80 rounded-xl p-4 space-y-2.5 text-xs">
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500 font-medium">Customer / Debtor:</span>
+                  <span className="font-bold text-slate-900 text-sm">{pendingDebtConfirmPayload.customerName}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500 font-medium">Phone Number:</span>
+                  <span className="font-mono text-slate-800 font-semibold">{pendingDebtConfirmPayload.customerNumber}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500 font-medium">Expected Due Date:</span>
+                  <span className="font-mono font-bold text-amber-800">{pendingDebtConfirmPayload.dueDate}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500 font-medium">Disbursement Source:</span>
+                  <span className={`font-bold text-[11px] uppercase px-2 py-0.5 rounded ${
+                    pendingDebtConfirmPayload.paymentMode === "ELECTRONIC_MONEY" 
+                      ? "bg-purple-100 text-purple-900 border border-purple-200"
+                      : "bg-emerald-100 text-emerald-900 border border-emerald-200"
+                  }`}>
+                    {pendingDebtConfirmPayload.paymentMode === "ELECTRONIC_MONEY" ? "📱 Electronic (MoMo)" : "💵 Physical Cash (Shop)"}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center pt-2 border-t border-slate-200/60">
+                  <span className="text-slate-500 font-medium">Loan Amount:</span>
+                  <span className="font-mono font-extrabold text-red-600 text-lg">
+                    ₵{Number(pendingDebtConfirmPayload.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+                {pendingDebtConfirmPayload.commission !== undefined && pendingDebtConfirmPayload.commission > 0 && (
+                  <div className="flex justify-between items-center text-[11px]">
+                    <span className="text-slate-500 font-medium">Expected Commission:</span>
+                    <span className="font-mono font-bold text-amber-700">
+                      ₵{Number(pendingDebtConfirmPayload.commission || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                )}
+                {pendingDebtConfirmPayload.reason && (
+                  <div className="pt-2 border-t border-slate-200/60">
+                    <span className="text-slate-500 font-medium block">Reason / Description:</span>
+                    <p className="text-slate-700 font-medium italic mt-0.5 bg-white p-2 rounded border border-slate-200/60">{pendingDebtConfirmPayload.reason}</p>
+                  </div>
+                )}
+              </div>
+
+              <p className="mt-4 text-xs text-slate-600 leading-relaxed bg-amber-50/80 border border-amber-200/60 rounded-lg p-3 text-amber-900">
+                ⚠️ <strong>Confirmation Notice:</strong> This will register an outstanding debt record against <strong>{pendingDebtConfirmPayload.customerName}</strong>.
+              </p>
+
+              <div className="mt-6 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setPendingDebtConfirmPayload(null)}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={executeConfirmedAddDebt}
+                  className="px-5 py-2 text-xs font-extrabold text-white bg-amber-600 hover:bg-amber-700 rounded-lg shadow-md shadow-amber-600/20 transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  <CheckCircle className="size-4" />
+                  <span>Confirm & Save Debt</span>
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* SHIFT CLOSE CONFIRMATION MODAL */}
+      <AnimatePresence>
+        {pendingShiftClosePayload !== null && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setPendingShiftClosePayload(null)}
+              className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 16 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 16 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              className="relative bg-white border border-slate-200 rounded-2xl shadow-2xl max-w-md w-full p-6 z-10 overflow-hidden"
+            >
+              <div className="flex items-start justify-between pb-3 border-b border-slate-100">
+                <div className="flex items-center gap-3">
+                  <div className="size-10 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center shrink-0 ring-4 ring-purple-50">
+                    <CheckCircle className="size-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-extrabold text-navy-dark">Confirm Shift Closure</h3>
+                    <p className="text-xs text-slate-500">Authorize end-of-day drawer & float reconciliation</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setPendingShiftClosePayload(null)}
+                  className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+                >
+                  <X className="size-5" />
+                </button>
+              </div>
+
+              <div className="mt-4 bg-slate-50 border border-slate-200/80 rounded-xl p-4 space-y-2 text-xs">
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500 font-medium">Active Teller / Operator:</span>
+                  <span className="font-bold text-slate-900">{currentUser?.name}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500 font-medium">Branch Outlet:</span>
+                  <span className="font-semibold text-slate-800">
+                    {branches.find(b => b.id === activeShift?.branchId)?.name || activeShift?.branchId || "Active Branch"}
+                  </span>
+                </div>
+                
+                <div className="pt-2 border-t border-slate-200/60 space-y-1.5">
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-600 font-medium">Physical Cash Drawer:</span>
+                    <span className="font-mono font-extrabold text-purple-700 text-base">
+                      ₵{pendingShiftClosePayload.actualCash.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-600 font-medium">MTN MoMo Float:</span>
+                    <span className="font-mono font-extrabold text-amber-700">
+                      ₵{pendingShiftClosePayload.actualMtn.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-600 font-medium">Telecel Float:</span>
+                    <span className="font-mono font-extrabold text-red-700">
+                      ₵{pendingShiftClosePayload.actualTelecel.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-600 font-medium">AirtelTigo Float:</span>
+                    <span className="font-mono font-extrabold text-blue-700">
+                      ₵{pendingShiftClosePayload.actualAirtel.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <p className="mt-4 text-xs text-slate-600 leading-relaxed bg-amber-50/80 border border-amber-200/60 rounded-lg p-3 text-amber-900">
+                🚨 <strong>Automatic Discrepancy Alarm Notice:</strong> Submitting will lock these figures. If any entered figure differs from expected figures, an immediate discrepancy alarm will be raised to the admin.
+              </p>
+
+              <div className="mt-6 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setPendingShiftClosePayload(null)}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={executeConfirmedShiftClose}
+                  className="px-5 py-2 text-xs font-extrabold text-white bg-purple-600 hover:bg-purple-700 rounded-lg shadow-md shadow-purple-600/20 transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  <CheckCircle className="size-4" />
+                  <span>Confirm & Close Shift</span>
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* LOGOUT CONFIRMATION MODAL */}
+      <AnimatePresence>
+        {isLogoutConfirmOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            {/* Overlay Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsLogoutConfirmOpen(false)}
+              className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs"
+            />
+
+            {/* Dialog Card */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 16 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 16 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              className="relative bg-white border border-slate-200 rounded-2xl shadow-2xl max-w-md w-full p-6 z-10 overflow-hidden"
+            >
+              <div className="flex items-start justify-between pb-3 border-b border-slate-100">
+                <div className="flex items-center gap-3">
+                  <div className="size-10 rounded-full bg-red-100 text-red-700 flex items-center justify-center shrink-0 ring-4 ring-red-50">
+                    <LogOut className="size-6 text-red-600" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-extrabold text-slate-900">Confirm Logout</h3>
+                    <p className="text-xs text-slate-500">Prevent unintended session termination</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsLogoutConfirmOpen(false)}
+                  className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+                >
+                  <X className="size-5" />
+                </button>
+              </div>
+
+              <div className="mt-4 bg-slate-50 border border-slate-200/80 rounded-xl p-4 space-y-2 text-xs">
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500 font-medium">Active Account:</span>
+                  <span className="font-bold text-slate-900 text-sm">{currentUser?.name}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500 font-medium">Access Role:</span>
+                  <span className="font-extrabold uppercase bg-blue-100 text-blue-900 px-2 py-0.5 rounded text-[10px]">
+                    {currentUser?.role === "ADMIN" ? "System Owner / Admin" : "Branch Operator"}
+                  </span>
+                </div>
+                {currentBranch && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-500 font-medium">Current Branch:</span>
+                    <span className="font-semibold text-slate-800">{currentBranch.name}</span>
+                  </div>
+                )}
+              </div>
+
+              <p className="mt-4 text-xs text-slate-600 leading-relaxed bg-amber-50/80 border border-amber-200/60 rounded-lg p-3 text-amber-900">
+                ⚠️ <strong>Notice:</strong> Logging out will safely preserve all recorded transactions, float counts, and shift logs. You can log back in anytime.
+              </p>
+
+              <div className="mt-6 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setIsLogoutConfirmOpen(false)}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsLogoutConfirmOpen(false);
+                    handleLogout();
+                  }}
+                  className="px-5 py-2 text-xs font-extrabold text-white bg-red-600 hover:bg-red-700 rounded-lg shadow-md shadow-red-600/20 transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  <LogOut className="size-4" />
+                  <span>Confirm & Log Out</span>
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* SINGLE DEBT CANCELLATION CONFIRMATION MODAL */}
+      <AnimatePresence>
+        {debtToCancel && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setDebtToCancel(null)}
+              className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs"
+            />
+
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 16 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 16 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              className="relative bg-white border border-slate-200 rounded-2xl shadow-2xl max-w-md w-full p-6 z-10 overflow-hidden"
+            >
+              <div className="flex items-start justify-between pb-3 border-b border-slate-100">
+                <div className="flex items-center gap-3">
+                  <div className="size-10 rounded-full bg-red-100 text-red-700 flex items-center justify-center shrink-0 ring-4 ring-red-50">
+                    <AlertTriangle className="size-6 text-red-600" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-extrabold text-slate-900">Confirm Debt Cancellation</h3>
+                    <p className="text-xs text-slate-500">Void or write off outstanding loan entry</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setDebtToCancel(null)}
+                  className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+                >
+                  <X className="size-5" />
+                </button>
+              </div>
+
+              <div className="mt-4 bg-slate-50 border border-slate-200/80 rounded-xl p-4 space-y-2 text-xs">
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500 font-medium">Debtor Name:</span>
+                  <span className="font-bold text-slate-900">{debtToCancel.customerName}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500 font-medium">Contact Number:</span>
+                  <span className="font-mono text-slate-800 font-semibold">{debtToCancel.customerNumber}</span>
+                </div>
+                <div className="flex justify-between items-center pt-2 border-t border-slate-200/60">
+                  <span className="text-slate-500 font-medium">Amount to Void/Cancel:</span>
+                  <span className="font-mono font-extrabold text-red-600 text-base">
+                    ₵{debtToCancel.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+
+                <div className="pt-3 border-t border-slate-200/60 space-y-2">
+                  <label className="block text-xs font-semibold text-slate-700">
+                    Reason for Cancellation:
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Returned funds, erroneous entry, write-off..."
+                    value={debtCancelReason}
+                    onChange={(e) => setDebtCancelReason(e.target.value)}
+                    className="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500/40"
+                  />
+                </div>
+              </div>
+
+              <p className="mt-4 text-xs text-slate-600 leading-relaxed bg-red-50/80 border border-red-200/60 rounded-lg p-3 text-red-900">
+                ⚠️ <strong>Action Notice:</strong> Confirming will change debt status to <strong>CANCELLED</strong> and record your username in audit logs to avoid unintended mistakes.
+              </p>
+
+              <div className="mt-6 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setDebtToCancel(null)}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
+                >
+                  Keep Debt
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const id = debtToCancel.id;
+                    setDebtToCancel(null);
+                    handleCancelDebt(id, debtCancelMode, debtCancelNetwork, debtCancelReason);
+                  }}
+                  className="px-5 py-2 text-xs font-extrabold text-white bg-red-600 hover:bg-red-700 rounded-lg shadow-md shadow-red-600/20 transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  <X className="size-4" />
+                  <span>Confirm & Void Debt</span>
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* TRANSACTION ERROR CORRECTION MODAL (ADMIN ONLY) */}
+      <AnimatePresence>
+        {selectedTxForCorrection && currentUser?.role === "ADMIN" && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setSelectedTxForCorrection(null)}
+              className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs"
+            />
+
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 16 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 16 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              className="relative bg-white border border-slate-200 rounded-2xl shadow-2xl max-w-lg w-full p-6 z-10 overflow-hidden text-left"
+            >
+              {/* Header */}
+              <div className="flex items-start justify-between pb-3 border-b border-slate-100">
+                <div className="flex items-center gap-3">
+                  <div className="size-10 rounded-full bg-amber-100 text-amber-800 flex items-center justify-center shrink-0 ring-4 ring-amber-50">
+                    <ShieldAlert className="size-6" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-lg font-extrabold text-slate-900">Correct Transaction Error</h3>
+                      <span className="text-[9px] bg-amber-100 text-amber-900 font-extrabold px-2 py-0.5 rounded uppercase tracking-wider border border-amber-200">
+                        Admin Authorized
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500">
+                      ID: <span className="font-mono font-bold text-slate-700">{selectedTxForCorrection.id}</span> • Operator: <span className="font-bold text-slate-800">{selectedTxForCorrection.userName}</span>
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setSelectedTxForCorrection(null)}
+                  className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+                >
+                  <X className="size-5" />
+                </button>
+              </div>
+
+              {/* Status alerts */}
+              {correctionError && (
+                <div className="mt-3 bg-rose-50 border border-rose-200 text-rose-800 text-xs p-2.5 rounded-lg flex items-center gap-2 font-medium">
+                  <AlertTriangle className="size-4 text-rose-600 shrink-0" />
+                  <span>{correctionError}</span>
+                </div>
+              )}
+              {correctionSuccessMsg && (
+                <div className="mt-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs p-2.5 rounded-lg flex items-center gap-2 font-bold animate-pulse">
+                  <CheckCircle className="size-4 text-emerald-600 shrink-0" />
+                  <span>{correctionSuccessMsg}</span>
+                </div>
+              )}
+
+              {/* Correction Form */}
+              <form onSubmit={handleExecuteCorrection} className="mt-4 space-y-4">
+                {/* Transaction Type & Network */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Type</label>
+                    <select
+                      value={editTxType}
+                      onChange={(e) => setEditTxType(e.target.value as TransactionType)}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-bold text-slate-800 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    >
+                      <option value="deposit">📥 Deposit</option>
+                      <option value="withdrawal">📤 Withdrawal</option>
+                      <option value="send_money">💸 Send Money</option>
+                      <option value="airtime">📱 Airtime Top-Up</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Network</label>
+                    <select
+                      value={editTxNetwork}
+                      onChange={(e) => setEditTxNetwork(e.target.value as NetworkType)}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-bold text-slate-800 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    >
+                      <option value="MTN">MTN</option>
+                      <option value="TELECEL">Telecel (Vodafone)</option>
+                      <option value="AIRTELTIGO">AirtelTigo</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Amount and Commission */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Amount (GHS)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      required
+                      value={editTxAmount}
+                      onChange={(e) => setEditTxAmount(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-extrabold font-mono text-slate-900 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Commission (GHS)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={editTxCommission}
+                      onChange={(e) => setEditTxCommission(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-extrabold font-mono text-emerald-700 bg-emerald-50/50 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    />
+                  </div>
+                </div>
+
+                {/* Phone Numbers */}
+                {editTxType === "send_money" ? (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Sender Number</label>
+                      <input
+                        type="text"
+                        value={editTxSenderNumber}
+                        onChange={(e) => setEditTxSenderNumber(e.target.value)}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono font-bold focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Receiver Number</label>
+                      <input
+                        type="text"
+                        value={editTxReceiverNumber}
+                        onChange={(e) => setEditTxReceiverNumber(e.target.value)}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono font-bold focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Customer Wallet Number</label>
+                    <input
+                      type="text"
+                      value={editTxCustomerNumber}
+                      onChange={(e) => setEditTxCustomerNumber(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono font-bold focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+                )}
+
+                {/* Status Toggle */}
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Transaction Ledger Status</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setEditTxStatus("ACTIVE")}
+                      className={`py-2 px-3 rounded-lg border text-xs font-bold transition-all cursor-pointer ${
+                        editTxStatus === "ACTIVE"
+                          ? "bg-emerald-600 text-white border-emerald-700 shadow-xs font-black"
+                          : "bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100"
+                      }`}
+                    >
+                      ✅ ACTIVE (Include in Balances)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditTxStatus("REVERSED")}
+                      className={`py-2 px-3 rounded-lg border text-xs font-bold transition-all cursor-pointer ${
+                        editTxStatus === "REVERSED"
+                          ? "bg-rose-600 text-white border-rose-700 shadow-xs font-black"
+                          : "bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100"
+                      }`}
+                    >
+                      🚫 REVERSED (Exclude / Void)
+                    </button>
+                  </div>
+                </div>
+
+                {/* Correction Reason */}
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                    Audit Correction Reason <span className="text-rose-600">*</span>
+                  </label>
+                  <textarea
+                    required
+                    rows={2}
+                    placeholder="e.g. Correcting operator typo: entered 500 instead of 50. Verified with physical cash count."
+                    value={correctionReason}
+                    onChange={(e) => setCorrectionReason(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium"
+                  />
+                </div>
+
+                <div className="bg-amber-50 border border-amber-200/80 rounded-lg p-3 text-[11px] text-amber-900 leading-relaxed">
+                  🔄 <strong>Automatic Figure Recalculation:</strong> Correcting this transaction will automatically adjust branch float balances, cashier shift expected cash, and total commissions across all reports.
+                </div>
+
+                {/* Action Buttons */}
+                <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedTxForCorrection(null)}
+                    className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSubmittingCorrection}
+                    className="px-5 py-2 text-xs font-extrabold text-white bg-blue-700 hover:bg-blue-800 disabled:opacity-50 rounded-lg shadow-md shadow-blue-600/20 transition-all cursor-pointer flex items-center gap-1.5"
+                  >
+                    {isSubmittingCorrection ? (
+                      <>
+                        <div className="size-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        <span>Updating Figures...</span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle className="size-4" />
+                        <span>Confirm & Update Figures</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* EXTERNAL CAPITAL SOLICITATION & LEDGER MODAL */}
+      <AnimatePresence>
+        {isExtCapModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsExtCapModalOpen(false)}
+              className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs"
+            />
+
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 16 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 16 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              className="relative bg-white border border-slate-200 rounded-2xl shadow-2xl max-w-3xl w-full p-6 z-10 my-8 max-h-[90vh] overflow-y-auto"
+            >
+              <div className="flex items-start justify-between pb-4 border-b border-slate-100">
+                <div className="flex items-center gap-3">
+                  <div className="size-10 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center shrink-0 ring-4 ring-purple-50">
+                    <Coins className="size-6 text-purple-700" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-extrabold text-slate-900">External Capital Reserve Management</h3>
+                    <p className="text-xs text-slate-500">Solicit reserves from external admins to prevent float/cash shortfalls</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsExtCapModalOpen(false)}
+                  className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+                >
+                  <X className="size-5" />
+                </button>
+              </div>
+
+              {/* Form Section */}
+              <div className="mt-5 bg-purple-50/50 border border-purple-100 rounded-xl p-5 space-y-4">
+                <h4 className="font-extrabold text-sm text-purple-950 flex items-center gap-2">
+                  <span>➕ Solicit New External Reserve Capital</span>
+                </h4>
+
+                {extCapError && (
+                  <div className="bg-red-50 border border-red-200 text-red-700 text-xs p-3 rounded-lg flex items-center gap-2">
+                    <AlertTriangle className="size-4 shrink-0 text-red-600" />
+                    <span>{extCapError}</span>
+                  </div>
+                )}
+
+                {extCapSuccess && (
+                  <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs p-3 rounded-lg">
+                    {extCapSuccess}
+                  </div>
+                )}
+
+                <form onSubmit={handleAddExternalCapital} className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 uppercase">Capital Medium Type</label>
+                      <select
+                        value={extCapType}
+                        onChange={(e) => setExtCapType(e.target.value as ExternalCapitalMedium)}
+                        className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-bold bg-white"
+                      >
+                        <option value="ELECTRONIC">💳 ELECTRONIC (MoMo Float Reserve)</option>
+                        <option value="PHYSICAL">💵 PHYSICAL CASH (Drawer Reserve)</option>
+                      </select>
+                    </div>
+
+                    {extCapType === "ELECTRONIC" && (
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 uppercase">Network Wallet</label>
+                        <select
+                          value={extCapNetwork}
+                          onChange={(e) => setExtCapNetwork(e.target.value as NetworkType)}
+                          className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-bold bg-white"
+                        >
+                          <option value="MTN">🟡 MTN MoMo</option>
+                          <option value="TELECEL">🔴 Telecel Cash</option>
+                          <option value="AIRTELTIGO">🔵 AirtelTigo Money</option>
+                        </select>
+                      </div>
+                    )}
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 uppercase">Solicited Admin Source</label>
+                      <input
+                        type="text"
+                        required
+                        value={extCapSourceName}
+                        onChange={(e) => setExtCapSourceName(e.target.value)}
+                        placeholder="e.g. External Director Kwame / Admin Bank Transfer"
+                        className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-semibold"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 uppercase">Capital Amount (GHS)</label>
+                      <input
+                        type="number"
+                        required
+                        step="0.01"
+                        min="1"
+                        value={extCapAmount}
+                        onChange={(e) => setExtCapAmount(e.target.value)}
+                        placeholder="e.g. 5000.00"
+                        className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono font-bold"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 uppercase">Target Branch Terminal</label>
+                    <select
+                      value={extCapBranchId || selectedBranchId}
+                      onChange={(e) => setExtCapBranchId(e.target.value)}
+                      className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-bold bg-white"
+                    >
+                      {branches.map(b => (
+                        <option key={b.id} value={b.id}>🏢 {b.name} ({b.location})</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 uppercase">Notes / Reference (Optional)</label>
+                    <input
+                      type="text"
+                      value={extCapNotes}
+                      onChange={(e) => setExtCapNotes(e.target.value)}
+                      placeholder="e.g. Emergency float buffer for weekend peak"
+                      className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-2 pt-1">
+                    <input
+                      type="checkbox"
+                      id="extCapDirectInject"
+                      checked={extCapDirectInject}
+                      onChange={(e) => setExtCapDirectInject(e.target.checked)}
+                      className="h-4 w-4 text-purple-600 focus:ring-purple-500 border-slate-300 rounded"
+                    />
+                    <label htmlFor="extCapDirectInject" className="text-xs text-slate-700 font-semibold cursor-pointer">
+                      Directly adjust active float/cash balance now (Auto-Injected)
+                    </label>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={isSubmittingExtCap}
+                    className="w-full py-2.5 px-4 bg-purple-700 hover:bg-purple-800 text-white font-extrabold text-xs uppercase tracking-wider rounded-lg shadow-md shadow-purple-600/20 transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    {isSubmittingExtCap ? "Processing Injection..." : "⚡ Inject External Capital"}
+                  </button>
+                </form>
+              </div>
+
+              {/* Reserve Ledger Section */}
+              <div className="mt-6 space-y-3">
+                <h4 className="font-extrabold text-sm text-slate-900 flex items-center justify-between">
+                  <span>📜 External Capital Reserve Records</span>
+                  <span className="text-xs bg-purple-100 text-purple-900 font-bold px-2 py-0.5 rounded-full">
+                    {extCapList.length} Entries
+                  </span>
+                </h4>
+
+                <div className="space-y-2.5 max-h-64 overflow-y-auto pr-1">
+                  {extCapList.length === 0 ? (
+                    <p className="text-xs text-slate-400 text-center py-6">No external capital records logged yet.</p>
+                  ) : (
+                    extCapList.map((cap) => (
+                      <div key={cap.id} className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2 text-xs">
+                        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded ${
+                                cap.type === "ELECTRONIC" ? "bg-sky-100 text-sky-900" : "bg-emerald-100 text-emerald-900"
+                              }`}>
+                                {cap.type} {cap.network ? `(${cap.network})` : ""}
+                              </span>
+                              <span className="font-bold text-slate-900">{cap.sourceName}</span>
+                              <span className="text-[10px] text-slate-400 font-mono">
+                                {new Date(cap.createdAt).toLocaleString()}
+                              </span>
+                            </div>
+                            {cap.notes && <p className="text-[11px] text-slate-500 mt-1">{cap.notes}</p>}
+                          </div>
+
+                          <div className="text-right flex items-center gap-2">
+                            <div>
+                              <p className="font-bold font-mono text-purple-950 text-sm">GHS {cap.amount.toLocaleString()}</p>
+                              <p className="text-[10px] text-slate-500 font-mono">
+                                Tapped: GHS {cap.tappedAmount.toLocaleString()} • Remaining: GHS {cap.remainingAmount.toLocaleString()}
+                              </p>
+                            </div>
+
+                            {cap.status === "ACTIVE" ? (
+                              <button
+                                type="button"
+                                onClick={() => handleReturnExtCap(cap.id)}
+                                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] uppercase px-2.5 py-1 rounded cursor-pointer transition-all shrink-0"
+                                title="Mark as returned / settled to external admin"
+                              >
+                                Mark Returned
+                              </button>
+                            ) : (
+                              <span className="bg-slate-200 text-slate-700 font-bold text-[10px] uppercase px-2 py-0.5 rounded shrink-0">
+                                Returned
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Manual Tap Expansion */}
+                        {cap.status === "ACTIVE" && cap.remainingAmount > 0 && (
+                          <div className="pt-2 border-t border-slate-200 flex items-center gap-2">
+                            {manualTapId === cap.id ? (
+                              <div className="flex-1 flex items-center gap-2">
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  max={cap.remainingAmount}
+                                  placeholder="Tap Amount"
+                                  value={manualTapAmount}
+                                  onChange={(e) => setManualTapAmount(e.target.value)}
+                                  className="w-28 px-2 py-1 text-xs border rounded font-mono font-bold"
+                                />
+                                <input
+                                  type="text"
+                                  placeholder="Reason"
+                                  value={manualTapReason}
+                                  onChange={(e) => setManualTapReason(e.target.value)}
+                                  className="flex-1 px-2 py-1 text-xs border rounded"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => handleManualTapExtCap(cap.id)}
+                                  className="bg-purple-700 hover:bg-purple-800 text-white text-xs font-bold px-2.5 py-1 rounded cursor-pointer"
+                                >
+                                  Confirm Tap
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setManualTapId(null)}
+                                  className="text-slate-400 hover:text-slate-600 text-xs px-2 py-1 cursor-pointer"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setManualTapId(cap.id);
+                                  setManualTapAmount("");
+                                  setManualTapReason("");
+                                }}
+                                className="text-[10px] text-purple-700 hover:text-purple-900 font-extrabold hover:underline cursor-pointer flex items-center gap-1"
+                              >
+                                ⚡ Tap This Reserve Manually
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* END OF SHIFT DAY REPORT & PRINT DIALOGUE MODAL */}
+      <AnimatePresence>
+        {isShiftReportDialogueOpen && selectedReportForPrint && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto">
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsShiftReportDialogueOpen(false)}
+              className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs no-print"
+            />
+
+            {/* Modal Card */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 16 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 16 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              className="relative bg-white border border-slate-200 rounded-2xl shadow-2xl max-w-2xl w-full p-6 z-10 overflow-hidden my-8"
+            >
+              {/* Dialogue Header */}
+              <div className="flex items-start justify-between pb-4 border-b border-slate-100 no-print">
+                <div className="flex items-center gap-3">
+                  <div className="size-10 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 ring-4 ring-emerald-50">
+                    <Printer className="size-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-extrabold text-slate-900">End of Shift Day Report</h3>
+                    <p className="text-xs text-slate-500">Review shift closure details & print daily audit receipt</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsShiftReportDialogueOpen(false)}
+                  className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+                >
+                  <X className="size-5" />
+                </button>
+              </div>
+
+              {/* Printable Shift Report Container */}
+              <div id="shift_report_printable" className="mt-4 space-y-4 text-xs">
+                
+                {/* Official Letterhead Header */}
+                <div className="text-center pb-4 border-b border-slate-200 space-y-1">
+                  <h1 className="text-base font-black tracking-wider text-slate-900 uppercase">Enakomoor Ventures</h1>
+                  <p className="text-[11px] font-bold text-blue-800 uppercase tracking-widest">Mobile Money & Financial Agency Terminal</p>
+                  <p className="text-[10px] text-slate-500 font-medium">Daily Operator Shift Reconciliation & Closing Report</p>
+                </div>
+
+                {/* Metadata Grid */}
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 grid grid-cols-2 sm:grid-cols-3 gap-3 text-slate-700 font-medium">
+                  <div>
+                    <span className="text-[10px] uppercase font-bold text-slate-400 block">Report Date</span>
+                    <span className="font-mono font-bold text-slate-900">{selectedReportForPrint.date}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] uppercase font-bold text-slate-400 block">Shift ID</span>
+                    <span className="font-mono text-slate-800 font-bold">{selectedReportForPrint.id}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] uppercase font-bold text-slate-400 block">Operator / Agent</span>
+                    <span className="font-bold text-slate-900">{selectedReportForPrint.userName}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] uppercase font-bold text-slate-400 block">Branch Outlet</span>
+                    <span className="font-bold text-slate-900">
+                      {branches.find(b => b.id === selectedReportForPrint.branchId)?.name || selectedReportForPrint.branchId}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] uppercase font-bold text-slate-400 block">Shift Duration</span>
+                    <span className="font-mono text-slate-800">{selectedReportForPrint.startTime} - {selectedReportForPrint.endTime || "Closed"}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] uppercase font-bold text-slate-400 block">Shift Status</span>
+                    <span className="inline-block bg-emerald-100 text-emerald-800 text-[10px] font-extrabold px-2 py-0.5 rounded uppercase">
+                      {selectedReportForPrint.status}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Opening Balances Section */}
+                <div className="space-y-1.5">
+                  <h4 className="font-extrabold text-slate-800 uppercase text-[10px] tracking-wider text-slate-500">
+                    1. Beginning Shift Balances (Initialized)
+                  </h4>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 bg-slate-50/80 p-2.5 rounded-lg border border-slate-200/80 font-mono text-[11px]">
+                    <div>
+                      <span className="text-slate-500 block text-[9px] font-sans">Cash Locker:</span>
+                      <span className="font-bold text-slate-900">₵{(selectedReportForPrint.openingCash || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                    </div>
+                    <div>
+                      <span className="text-amber-700 block text-[9px] font-sans">MTN Float:</span>
+                      <span className="font-bold text-slate-900">₵{(selectedReportForPrint.openingFloatMtn || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                    </div>
+                    <div>
+                      <span className="text-red-700 block text-[9px] font-sans">Telecel Float:</span>
+                      <span className="font-bold text-slate-900">₵{(selectedReportForPrint.openingFloatTelecel || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                    </div>
+                    <div>
+                      <span className="text-blue-700 block text-[9px] font-sans">AirtelTigo Float:</span>
+                      <span className="font-bold text-slate-900">₵{(selectedReportForPrint.openingFloatAirtelTigo || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* End of Shift Reconciliation Table */}
+                <div className="space-y-1.5">
+                  <h4 className="font-extrabold text-slate-800 uppercase text-[10px] tracking-wider text-slate-500">
+                    2. Closing Shift Reconciliations (Counted vs Expected)
+                  </h4>
+                  <div className="border border-slate-200 rounded-xl overflow-hidden">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-slate-100 text-slate-600 font-extrabold text-[10px] uppercase tracking-wider border-b border-slate-200">
+                          <th className="p-2 pl-3">Ledger Component</th>
+                          <th className="p-2 text-right">Expected</th>
+                          <th className="p-2 text-right">Counted</th>
+                          <th className="p-2 pr-3 text-right">Variance</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
+                        <tr>
+                          <td className="p-2 pl-3 font-sans font-bold text-slate-900">Physical Cash Drawer</td>
+                          <td className="p-2 text-right font-medium text-slate-700">
+                            ₵{(selectedReportForPrint.expectedCash || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </td>
+                          <td className="p-2 text-right font-bold text-blue-800">
+                            ₵{(selectedReportForPrint.actualCash || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </td>
+                          <td className={`p-2 pr-3 text-right font-extrabold ${
+                            (selectedReportForPrint.difference || 0) < 0 ? 'text-red-600' : (selectedReportForPrint.difference || 0) > 0 ? 'text-emerald-600' : 'text-slate-700'
+                          }`}>
+                            ₵{(selectedReportForPrint.difference || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </td>
+                        </tr>
+                        <tr>
+                          <td className="p-2 pl-3 font-sans font-bold text-amber-800">MTN MoMo Float</td>
+                          <td className="p-2 text-right font-medium text-slate-700">
+                            ₵{(selectedReportForPrint.expectedFloatMtn ?? selectedReportForPrint.openingFloatMtn ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </td>
+                          <td className="p-2 text-right font-bold text-slate-900">
+                            ₵{(selectedReportForPrint.actualFloatMtn || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </td>
+                          <td className={`p-2 pr-3 text-right font-bold ${
+                            (selectedReportForPrint.differenceFloatMtn || 0) < 0 ? 'text-red-600' : 'text-slate-700'
+                          }`}>
+                            ₵{(selectedReportForPrint.differenceFloatMtn || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </td>
+                        </tr>
+                        <tr>
+                          <td className="p-2 pl-3 font-sans font-bold text-red-800">Telecel Float</td>
+                          <td className="p-2 text-right font-medium text-slate-700">
+                            ₵{(selectedReportForPrint.expectedFloatTelecel ?? selectedReportForPrint.openingFloatTelecel ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </td>
+                          <td className="p-2 text-right font-bold text-slate-900">
+                            ₵{(selectedReportForPrint.actualFloatTelecel || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </td>
+                          <td className={`p-2 pr-3 text-right font-bold ${
+                            (selectedReportForPrint.differenceFloatTelecel || 0) < 0 ? 'text-red-600' : 'text-slate-700'
+                          }`}>
+                            ₵{(selectedReportForPrint.differenceFloatTelecel || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </td>
+                        </tr>
+                        <tr>
+                          <td className="p-2 pl-3 font-sans font-bold text-blue-800">AirtelTigo Float</td>
+                          <td className="p-2 text-right font-medium text-slate-700">
+                            ₵{(selectedReportForPrint.expectedFloatAirtelTigo ?? selectedReportForPrint.openingFloatAirtelTigo ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </td>
+                          <td className="p-2 text-right font-bold text-slate-900">
+                            ₵{(selectedReportForPrint.actualFloatAirtelTigo || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </td>
+                          <td className={`p-2 pr-3 text-right font-bold ${
+                            (selectedReportForPrint.differenceFloatAirtelTigo || 0) < 0 ? 'text-red-600' : 'text-slate-700'
+                          }`}>
+                            ₵{(selectedReportForPrint.differenceFloatAirtelTigo || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Cash Shortage / Surplus Highlight Card */}
+                <div className={`p-3 rounded-xl border font-bold flex justify-between items-center text-xs ${
+                  (selectedReportForPrint.difference || 0) === 0 ? "bg-emerald-50 text-emerald-900 border-emerald-200" :
+                  (selectedReportForPrint.difference || 0) < 0 ? "bg-red-50 text-red-900 border-red-200" :
+                  "bg-amber-50 text-amber-900 border-amber-200"
+                }`}>
+                  <span className="font-sans font-extrabold uppercase tracking-wide">
+                    Final Net Cash Drawer Position:
+                  </span>
+                  <span className="font-mono text-sm font-black">
+                    {(selectedReportForPrint.difference || 0) === 0 ? "BALANCED (0.00)" :
+                     (selectedReportForPrint.difference || 0) < 0 ? `SHORTAGE: ₵${Math.abs(selectedReportForPrint.difference || 0).toFixed(2)}` :
+                     `SURPLUS: +₵${(selectedReportForPrint.difference || 0).toFixed(2)}`}
+                  </span>
+                </div>
+
+                {/* Printable Signature Lines */}
+                <div className="pt-6 mt-4 border-t border-slate-200 grid grid-cols-2 gap-8 text-[10px] text-slate-600">
+                  <div className="space-y-6">
+                    <p className="font-bold">Agent / Operator Verification:</p>
+                    <div className="border-b border-slate-400 w-full"></div>
+                    <p>Signature & Date: {selectedReportForPrint.userName}</p>
+                  </div>
+                  <div className="space-y-6">
+                    <p className="font-bold">Supervisor / Admin Sign-Off:</p>
+                    <div className="border-b border-slate-400 w-full"></div>
+                    <p>Signature & Date: ____________________</p>
+                  </div>
+                </div>
+
+              </div>
+
+              {/* Dialogue Actions Footer */}
+              <div className="mt-6 flex items-center justify-end gap-3 pt-4 border-t border-slate-100 no-print">
+                <button
+                  type="button"
+                  onClick={() => setIsShiftReportDialogueOpen(false)}
+                  className="px-4 py-2.5 text-xs font-bold text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors cursor-pointer"
+                >
+                  Close Dialogue
+                </button>
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="px-5 py-2.5 text-xs font-extrabold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-md shadow-emerald-600/20 transition-all cursor-pointer flex items-center gap-2"
+                >
+                  <Printer className="size-4" />
+                  <span>🖨️ Print Day's Shift Report</span>
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
+
+

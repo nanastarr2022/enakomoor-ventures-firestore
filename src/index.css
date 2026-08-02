@@ -230,3 +230,43 @@ html.dark .recharts-default-tooltip {
   font-family: var(--font-mono);
 }
 
+/* PRINTABLE SHIFT REPORT STYLES */
+@media print {
+  /* Hide non-printable UI elements */
+  body * {
+    visibility: hidden !important;
+  }
+  
+  .no-print,
+  nav,
+  aside,
+  header,
+  button,
+  footer {
+    display: none !important;
+  }
+
+  /* Make printable report container visible and expand to page */
+  #shift_report_printable,
+  #shift_report_printable * {
+    visibility: visible !important;
+  }
+
+  #shift_report_printable {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 24px !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+}
+

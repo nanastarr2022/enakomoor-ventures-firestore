@@ -11,12 +11,32 @@ export interface User {
   role: UserRole;
   branchId: string;
   isActive: boolean;
+  currentSessionToken?: string;
 }
 
 export interface Branch {
   id: string;
   name: string;
   location: string;
+}
+
+export type ExternalCapitalMedium = "ELECTRONIC" | "PHYSICAL";
+
+export interface ExternalCapital {
+  id: string;
+  branchId: string;
+  shiftId?: string;
+  type: ExternalCapitalMedium;
+  network?: NetworkType;
+  sourceName: string;
+  amount: number;
+  tappedAmount: number;
+  remainingAmount: number;
+  notes?: string;
+  recordedByUserId: string;
+  recordedByUserName: string;
+  createdAt: string;
+  status: "ACTIVE" | "EXHAUSTED" | "RETURNED";
 }
 
 export interface Shift {
@@ -31,9 +51,24 @@ export interface Shift {
   openingFloatMtn: number;
   openingFloatTelecel: number;
   openingFloatAirtelTigo: number;
+  openingExternalCash?: number;
+  openingExternalElectronic?: number;
+  injectedExternalCash?: number;
+  injectedExternalElectronic?: number;
+  tappedExternalCash?: number;
+  tappedExternalElectronic?: number;
   expectedCash?: number;
   actualCash?: number;
   difference?: number;
+  expectedFloatMtn?: number;
+  actualFloatMtn?: number;
+  differenceFloatMtn?: number;
+  expectedFloatTelecel?: number;
+  actualFloatTelecel?: number;
+  differenceFloatTelecel?: number;
+  expectedFloatAirtelTigo?: number;
+  actualFloatAirtelTigo?: number;
+  differenceFloatAirtelTigo?: number;
   status: "OPEN" | "CLOSED";
 }
 
@@ -57,6 +92,7 @@ export interface Transaction {
   status: "ACTIVE" | "REVERSED" | "PENDING_APPROVAL" | "REJECTED";
   correctedBy?: string;
   correctionReason?: string;
+  correctedAt?: string;
 }
 
 export interface CommissionRule {
@@ -72,12 +108,18 @@ export interface Debt {
   customerName: string;
   customerNumber: string;
   amount: number;
+  commission?: number;
+  paymentMode?: "PHYSICAL_CASH" | "ELECTRONIC_MONEY";
+  paymentNetwork?: "MTN" | "TELECEL" | "AIRTELTIGO";
   reason: string;
   dueDate: string; // YYYY-MM-DD
   recordedByUserName: string;
-  status: "OUTSTANDING" | "PAID";
+  status: "OUTSTANDING" | "PAID" | "CANCELLED";
   clearedAt?: string; // ISO timestamp
   clearedByUserName?: string;
+  clearedPaymentMode?: "PHYSICAL_CASH" | "ELECTRONIC_MONEY";
+  clearedPaymentNetwork?: "MTN" | "TELECEL" | "AIRTELTIGO";
+  createdAt?: string; // ISO timestamp of when debt was recorded
 }
 
 export interface FloatBalance {
@@ -108,6 +150,17 @@ export interface BranchNetProfit {
   todayProfit: number;
   cumulativeProfit: number;
   transactionCount: number;
+  todayTxCount?: number;
+  workingCapital?: number;
+  outstandingDebts?: number;
+  totalFloats?: number;
+  cashBalance?: number;
+  mtnFloat?: number;
+  telecelFloat?: number;
+  airtelTigoFloat?: number;
+  mtnAirtimeFloat?: number;
+  telecelAirtimeFloat?: number;
+  airtelTigoAirtimeFloat?: number;
 }
 
 export interface DashboardStats {
@@ -122,7 +175,15 @@ export interface DashboardStats {
   currentMtnFloat: number;
   currentTelecelFloat: number;
   currentAirtelTigoFloat: number;
+  totalWorkingCapital?: number;
+  combinedTotalCapital?: number;
   branchNetProfits?: BranchNetProfit[];
+  totalExternalCapital?: number;
+  externalElectronicCapital?: number;
+  externalPhysicalCapital?: number;
+  tappedExternalCapital?: number;
+  remainingExternalCapital?: number;
+  externalCapitals?: ExternalCapital[];
 }
 
 export interface AuthResponse {
