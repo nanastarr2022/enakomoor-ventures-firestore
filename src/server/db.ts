@@ -317,8 +317,9 @@ class JSONDatabase {
           console.log("[DB] Loaded state from Firestore.");
           return;
         }
-      } catch (err) {
-        console.error("[DB] Failed to load from Firestore, falling back to local file:", err);
+      } catch (err: any) {
+        console.warn(`[DB] Firestore database unavailable (${err?.message || err}). Disabling Firestore sync and falling back to local file.`);
+        firestoreDoc = null;
       }
     }
 
@@ -343,6 +344,18 @@ class JSONDatabase {
   }
 
   private ensureDefaults() {
+    if (!this.data.branches || this.data.branches.length === 0) {
+      this.data.branches = INITIAL_BRANCHES;
+    }
+    if (!this.data.users || this.data.users.length === 0) {
+      this.data.users = INITIAL_USERS;
+    }
+    if (!this.data.commissions || this.data.commissions.length === 0) {
+      this.data.commissions = INITIAL_COMMISSIONS;
+    }
+    if (!this.data.floats || this.data.floats.length === 0) {
+      this.data.floats = INITIAL_FLOATS;
+    }
     if (!this.data.notifications) {
       this.data.notifications = [];
     }
@@ -523,8 +536,9 @@ class JSONDatabase {
     // Firestore: the real persistent store on Render
     if (firestoreDoc) {
       const snapshot = JSON.parse(JSON.stringify(this.data));
-      firestoreDoc.set(snapshot).catch(err => {
-        console.error("[DB] Error saving to Firestore:", err);
+      firestoreDoc.set(snapshot).catch((err: any) => {
+        console.warn(`[DB] Error saving to Firestore (${err?.message || err}). Disabling Firestore sync.`);
+        firestoreDoc = null;
       });
     }
   }

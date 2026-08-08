@@ -1,5 +1,15 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
+  exportTransactionsPDF,
+  exportDebtsPDF,
+  exportShiftsPDF,
+  exportFinancialStatementPDF
+} from "./utils/pdfExport";
+
+const mtnLogoImg = "/src/assets/images/mtn_logo_1786149470834.jpg";
+const telecelLogoImg = "/src/assets/images/telecel_logo_1786150076347.jpg";
+const airtelTigoLogoImg = "/src/assets/images/airteltigo_logo_1786150646124.jpg";
+import {
   TrendingUp,
   Plus,
   ArrowUpRight,
@@ -364,9 +374,14 @@ export default function App() {
     return alerts;
   }, [floatBalances, currentUser, selectedBranchId, branches, token]);
 
-  // Automatic Audio Alarm for low float alerts
+  // Automatic Audio Alarm for low float alerts (Auto-mutes after 30s)
   useEffect(() => {
-    if (lowFloatAlerts.length === 0 || isAlarmMuted) return;
+    if (lowFloatAlerts.length === 0) {
+      setIsAlarmMuted(false);
+      return;
+    }
+
+    if (isAlarmMuted) return;
 
     const playSiren = () => {
       try {
@@ -409,9 +424,18 @@ export default function App() {
     // Play once immediately
     playSiren();
 
-    // Loop every 3.5 seconds
+    // Loop siren every 3.5 seconds
     const interval = setInterval(playSiren, 3500);
-    return () => clearInterval(interval);
+
+    // Automatically mute sirens after 30 seconds
+    const autoMuteTimer = setTimeout(() => {
+      setIsAlarmMuted(true);
+    }, 30000);
+
+    return () => {
+      clearInterval(interval);
+      clearTimeout(autoMuteTimer);
+    };
   }, [lowFloatAlerts, isAlarmMuted]);
 
   const activeToasts = useMemo(() => {
@@ -1872,6 +1896,55 @@ const handleResetPassword = async (e: React.FormEvent) => {
     }
   };
 
+  const handleExportTransactionsPDFHandler = async (category: "MOMO" | "AIRTIME" | "ALL" = "ALL", action: "download" | "print" = "download") => {
+    setIsExportingTxs(true);
+    try {
+      const headers = { "Authorization": `Bearer ${token}` };
+      const res = await fetch("/api/transactions?branchId=all", { headers });
+      if (!res.ok) throw new Error("Failed to fetch global transactions list.");
+      let allTxs: Transaction[] = await res.json();
+      exportTransactionsPDF(allTxs, branches, category, action);
+    } catch (error: any) {
+      alert("Error exporting transactions PDF: " + error.message);
+    } finally {
+      setIsExportingTxs(false);
+    }
+  };
+
+  const handleExportDebtsPDFHandler = async (action: "download" | "print" = "download") => {
+    setIsExportingDebts(true);
+    try {
+      const headers = { "Authorization": `Bearer ${token}` };
+      const res = await fetch("/api/debts?branchId=all", { headers });
+      if (!res.ok) throw new Error("Failed to fetch global debtor list.");
+      const allDebts: Debt[] = await res.json();
+      exportDebtsPDF(allDebts, branches, action);
+    } catch (error: any) {
+      alert("Error exporting debt records PDF: " + error.message);
+    } finally {
+      setIsExportingDebts(false);
+    }
+  };
+
+  const handleExportShiftsPDFHandler = async (action: "download" | "print" = "download") => {
+    setIsExportingShifts(true);
+    try {
+      const headers = { "Authorization": `Bearer ${token}` };
+      const res = await fetch("/api/shifts/closing-reports?branchId=all", { headers });
+      if (!res.ok) throw new Error("Failed to fetch global shift logs.");
+      const allShifts: Shift[] = await res.json();
+      exportShiftsPDF(allShifts, branches, action);
+    } catch (error: any) {
+      alert("Error exporting shift reports PDF: " + error.message);
+    } finally {
+      setIsExportingShifts(false);
+    }
+  };
+
+  const handleExportStatementPDFHandler = (action: "download" | "print" = "download") => {
+    exportFinancialStatementPDF(stats, branches, reportsRange, transactions, action);
+  };
+
   const handleReverseTransaction = async (e: React.FormEvent) => {
     e.preventDefault();
     setCorrectionError("");
@@ -2009,11 +2082,7 @@ const handleResetPassword = async (e: React.FormEvent) => {
   };
 
   const printReport = () => {
-    setIsPrinting(true);
-    setTimeout(() => {
-      window.print();
-      setIsPrinting(false);
-    }, 500);
+    handleExportStatementPDFHandler("print");
   };
 
   // Filter transactions by phone search and category (MoMo vs Airtime)
@@ -2418,7 +2487,7 @@ const handleResetPassword = async (e: React.FormEvent) => {
             </div>
             <div>
               <h1 className="font-bold text-lg leading-tight uppercase tracking-tight">Enakomoor Ventures</h1>
-              <p className="text-xs text-blue-200">Ghanaian Agent Ledger System</p>
+              <p className="text-xs text-blue-200 font-semibold uppercase tracking-wider">MANAGEMENT SUITE</p>
             </div>
           </div>
 
@@ -2438,48 +2507,6 @@ const handleResetPassword = async (e: React.FormEvent) => {
               </div>
               <span className="text-sm font-semibold hidden sm:inline">{currentUser?.name}</span>
             </div>
-
-            {/* Simplified View Toggler */}
-            <div className="flex items-center bg-blue-950/60 rounded-lg p-0.5 border border-blue-800/80">
-              <button
-                type="button"
-                onClick={() => setIsSimplifiedMode(false)}
-                className={`px-2.5 py-1 text-[11px] font-extrabold uppercase rounded-md transition-all cursor-pointer ${
-                  !isSimplifiedMode ? "bg-yellow-400 text-blue-950 shadow-sm" : "text-blue-200 hover:text-white"
-                }`}
-                title="Full Advanced Console View"
-              >
-                Full
-              </button>
-              <button
-                type="button"
-                onClick={() => setIsSimplifiedMode(true)}
-                className={`px-2.5 py-1 text-[11px] font-extrabold uppercase rounded-md transition-all cursor-pointer ${
-                  isSimplifiedMode ? "bg-yellow-400 text-blue-950 shadow-sm" : "text-blue-200 hover:text-white"
-                }`}
-                title="Very Simplified Clean View"
-              >
-                Simple
-              </button>
-            </div>
-
-            {/* Global Theme Toggle */}
-            <motion.button
-              id="global_theme_toggle_btn"
-              onClick={() => setTheme(t => t.startsWith("light") ? "dark" : "light")}
-              className="text-white hover:text-yellow-300 p-1.5 hover:bg-blue-800 rounded-lg transition-colors cursor-pointer flex items-center justify-center"
-              title={theme.startsWith("light") ? "Switch to Dark Theme" : "Switch to Light Theme"}
-              whileTap={{ scale: 0.9 }}
-              whileHover={{ scale: 1.05 }}
-            >
-              <motion.div
-                animate={{ rotate: theme.startsWith("light") ? 0 : 180 }}
-                transition={{ duration: 0.4, ease: "easeInOut" }}
-                className="flex items-center justify-center"
-              >
-                {theme.startsWith("light") ? <Moon className="size-5" /> : <Sun className="size-5" />}
-              </motion.div>
-            </motion.button>
 
             {/* Manual Page Refresh */}
             <button
@@ -2764,21 +2791,48 @@ const handleResetPassword = async (e: React.FormEvent) => {
         </div>
       </section>
 
-      {/* Floats Threshold Alert banner for Operator */}
-      {currentUser?.role === "WORKER" && (isBranchLowFloatMTN || isBranchLowFloatTELECEL || isBranchLowFloatAIRTEL) && (
+      {/* Floats Threshold Alert banner */}
+      {((currentUser?.role === "WORKER" && (isBranchLowFloatMTN || isBranchLowFloatTELECEL || isBranchLowFloatAIRTEL)) || lowFloatAlerts.length > 0) && (
         <section className="bg-amber-100 border-b border-amber-200 py-3 px-4">
-          <div className="max-w-7xl mx-auto flex items-start gap-3">
-            <AlertTriangle className="size-5 text-amber-700 shrink-0 mt-0.5" />
-            <div>
-              <p className="font-bold text-sm text-neutral-900">Low Float Threshold Alert</p>
-              <p className="text-xs text-amber-800">
-                The current wallet balances of this branch fall below the safe operation limits set by the Owner. 
-                {isBranchLowFloatMTN && ` MTN: GHS ${currentBranchFloat?.mtnFloat.toLocaleString()}`}
-                {isBranchLowFloatTELECEL && ` Telecel: GHS ${currentBranchFloat?.telecelFloat.toLocaleString()}`}
-                {isBranchLowFloatAIRTEL && ` AirtelTigo: GHS ${currentBranchFloat?.airtelTigoFloat.toLocaleString()}`}
-                . Please contact Admin immediately for float financing.
-              </p>
+          <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="size-5 text-amber-700 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold text-sm text-neutral-900 flex items-center gap-2">
+                  <span>Low Float Threshold Alert</span>
+                  {isAlarmMuted ? (
+                    <span className="bg-slate-200 text-slate-700 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                      <VolumeX className="size-3" /> Siren Muted
+                    </span>
+                  ) : (
+                    <span className="bg-amber-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 animate-pulse">
+                      <Volume2 className="size-3" /> Siren Active (Auto-mutes in 30s)
+                    </span>
+                  )}
+                </p>
+                <p className="text-xs text-amber-800">
+                  The wallet balances fall below safe limits.
+                  {isBranchLowFloatMTN && ` MTN: GHS ${currentBranchFloat?.mtnFloat.toLocaleString()}`}
+                  {isBranchLowFloatTELECEL && ` Telecel: GHS ${currentBranchFloat?.telecelFloat.toLocaleString()}`}
+                  {isBranchLowFloatAIRTEL && ` AirtelTigo: GHS ${currentBranchFloat?.airtelTigoFloat.toLocaleString()}`}
+                  {currentUser?.role === "ADMIN" && lowFloatAlerts.length > 0 && ` (${lowFloatAlerts.length} network alert(s) across branches)`}
+                  . Please arrange float rebalancing immediately.
+                </p>
+              </div>
             </div>
+            <button
+              type="button"
+              onClick={() => setIsAlarmMuted(!isAlarmMuted)}
+              className={`shrink-0 text-xs font-bold px-3 py-1.5 rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer ${
+                isAlarmMuted 
+                  ? "bg-amber-200 text-amber-900 border-amber-300 hover:bg-amber-300"
+                  : "bg-amber-600 text-white border-amber-700 hover:bg-amber-700 shadow-sm"
+              }`}
+              title={isAlarmMuted ? "Unmute Siren" : "Mute Siren"}
+            >
+              {isAlarmMuted ? <VolumeX className="size-4" /> : <Volume2 className="size-4 animate-bounce" />}
+              <span>{isAlarmMuted ? "Unmute Siren" : "Mute Siren"}</span>
+            </button>
           </div>
         </section>
       )}
@@ -3349,16 +3403,16 @@ const handleResetPassword = async (e: React.FormEvent) => {
             {/* Navigation Sidebar */}
             <aside className="w-full md:w-64 shrink-0 space-y-3">
               {/* Operations Group */}
-              <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-3">
-                <div className="flex items-center gap-2 px-3 pt-1 pb-2 border-b border-slate-100 mb-2">
-                  <Briefcase className="size-3.5 text-blue-600" />
-                  <span className="text-[11px] font-black text-slate-800 uppercase tracking-wider">Operations</span>
+              <div className="bg-[#0b1329] rounded-xl shadow-sm border border-slate-800 p-3 text-white">
+                <div className="flex items-center gap-2 px-3 pt-1 pb-2 border-b border-slate-800/80 mb-2">
+                  <Briefcase className="size-3.5 text-blue-400" />
+                  <span className="text-[11px] font-black text-slate-200 uppercase tracking-wider">Operations</span>
                 </div>
                 <nav className="space-y-1">
                   <button
                     onClick={() => { setActiveTab("dashboard"); setClosingSuccess(null); }}
                     className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer ${
-                      activeTab === "dashboard" ? "bg-blue-600 text-white shadow-md shadow-blue-600/30 font-bold" : "text-slate-700 hover:bg-slate-100"
+                      activeTab === "dashboard" ? "bg-blue-600 text-white shadow-md shadow-blue-600/30 font-bold" : "text-slate-300 hover:bg-slate-800/80"
                     }`}
                   >
                     <TrendingUp className="size-4" />
@@ -3368,7 +3422,7 @@ const handleResetPassword = async (e: React.FormEvent) => {
                   <button
                     onClick={() => { setActiveTab("transactions"); setClosingSuccess(null); }}
                     className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer ${
-                      activeTab === "transactions" ? "bg-blue-600 text-white shadow-md shadow-blue-600/30 font-bold" : "text-slate-700 hover:bg-slate-100"
+                      activeTab === "transactions" ? "bg-blue-600 text-white shadow-md shadow-blue-600/30 font-bold" : "text-slate-300 hover:bg-slate-800/80"
                     }`}
                   >
                     <div className="flex items-center gap-3">
@@ -3376,14 +3430,14 @@ const handleResetPassword = async (e: React.FormEvent) => {
                       <span>Enter Transaction</span>
                     </div>
                     {activeShift ? (
-                      <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 border-2 border-white ring-1 ring-emerald-500 animate-pulse"></span>
+                      <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 border-2 border-slate-900 ring-1 ring-emerald-500 animate-pulse"></span>
                     ) : null}
                   </button>
 
                   <button
                     onClick={() => { setActiveTab("closing"); setClosingSuccess(null); }}
                     className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer ${
-                      activeTab === "closing" ? "bg-blue-600 text-white shadow-md shadow-blue-600/30 font-bold" : "text-slate-700 hover:bg-slate-100"
+                      activeTab === "closing" ? "bg-blue-600 text-white shadow-md shadow-blue-600/30 font-bold" : "text-slate-300 hover:bg-slate-800/80"
                     }`}
                   >
                     <div className="flex items-center gap-3">
@@ -3391,27 +3445,27 @@ const handleResetPassword = async (e: React.FormEvent) => {
                       <span>Shift Close / EOD</span>
                     </div>
                     {currentUser?.role === "ADMIN" ? (
-                      <span className="text-[9px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded border border-slate-200 font-extrabold uppercase tracking-wider">BYPASS</span>
+                      <span className="text-[9px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded border border-slate-700 font-extrabold uppercase tracking-wider">BYPASS</span>
                     ) : !activeShift ? (
-                      <span className="text-xs bg-slate-200 text-slate-700 px-2 py-0.5 rounded-full font-bold">OFF</span>
+                      <span className="text-xs bg-slate-800 text-slate-300 px-2 py-0.5 rounded-full font-bold">OFF</span>
                     ) : (
-                      <span className="text-xs bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold">ON</span>
+                      <span className="text-xs bg-emerald-900/60 text-emerald-300 px-2 py-0.5 rounded-full font-bold">ON</span>
                     )}
                   </button>
                 </nav>
               </div>
 
               {/* Ledger Group */}
-              <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-3">
-                <div className="flex items-center gap-2 px-3 pt-1 pb-2 border-b border-slate-100 mb-2">
-                  <BookOpen className="size-3.5 text-emerald-600" />
-                  <span className="text-[11px] font-black text-slate-800 uppercase tracking-wider">Ledger</span>
+              <div className="bg-[#0b1329] rounded-xl shadow-sm border border-slate-800 p-3 text-white">
+                <div className="flex items-center gap-2 px-3 pt-1 pb-2 border-b border-slate-800/80 mb-2">
+                  <BookOpen className="size-3.5 text-emerald-400" />
+                  <span className="text-[11px] font-black text-slate-200 uppercase tracking-wider">Ledger</span>
                 </div>
                 <nav className="space-y-1">
                   <button
                     onClick={() => { setActiveTab("debts"); setClosingSuccess(null); }}
                     className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer ${
-                      activeTab === "debts" ? "bg-blue-600 text-white shadow-md shadow-blue-600/30 font-bold" : "text-slate-700 hover:bg-slate-100"
+                      activeTab === "debts" ? "bg-blue-600 text-white shadow-md shadow-blue-600/30 font-bold" : "text-slate-300 hover:bg-slate-800/80"
                     }`}
                   >
                     <div className="flex items-center gap-3">
@@ -3419,7 +3473,7 @@ const handleResetPassword = async (e: React.FormEvent) => {
                       <span>Debt Ledger Book</span>
                     </div>
                     {overdueDebtsCount > 0 && (
-                      <span className="bg-rose-500 text-white text-[11px] font-extrabold px-2 py-0.5 rounded-full ring-2 ring-white animate-pulse flex items-center gap-1 shadow-xs">
+                      <span className="bg-rose-500 text-white text-[11px] font-extrabold px-2 py-0.5 rounded-full ring-2 ring-slate-900 animate-pulse flex items-center gap-1 shadow-xs">
                         <span>{overdueDebtsCount}</span>
                         <span className="text-[9px] uppercase tracking-wider">Overdue</span>
                       </span>
@@ -3429,7 +3483,7 @@ const handleResetPassword = async (e: React.FormEvent) => {
                   <button
                     onClick={() => { setActiveTab("reports"); setClosingSuccess(null); }}
                     className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer ${
-                      activeTab === "reports" ? "bg-blue-600 text-white shadow-md shadow-blue-600/30 font-bold" : "text-slate-700 hover:bg-slate-100"
+                      activeTab === "reports" ? "bg-blue-600 text-white shadow-md shadow-blue-600/30 font-bold" : "text-slate-300 hover:bg-slate-800/80"
                     }`}
                   >
                     <FileText className="size-4" />
@@ -3439,10 +3493,10 @@ const handleResetPassword = async (e: React.FormEvent) => {
               </div>
 
               {/* Management Group */}
-              <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-3">
-                <div className="flex items-center gap-2 px-3 pt-1 pb-2 border-b border-slate-100 mb-2">
-                  <Sliders className="size-3.5 text-purple-600" />
-                  <span className="text-[11px] font-black text-slate-800 uppercase tracking-wider">Management</span>
+              <div className="bg-[#0b1329] rounded-xl shadow-sm border border-slate-800 p-3 text-white">
+                <div className="flex items-center gap-2 px-3 pt-1 pb-2 border-b border-slate-800/80 mb-2">
+                  <Sliders className="size-3.5 text-purple-400" />
+                  <span className="text-[11px] font-black text-slate-200 uppercase tracking-wider">Management</span>
                 </div>
                 <nav className="space-y-1">
                   {currentUser?.role === "ADMIN" ? (
@@ -3450,7 +3504,7 @@ const handleResetPassword = async (e: React.FormEvent) => {
                       <button
                         onClick={() => { setActiveTab("branches_workers"); setClosingSuccess(null); }}
                         className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer ${
-                          activeTab === "branches_workers" ? "bg-blue-600 text-white shadow-md shadow-blue-600/30 font-bold" : "text-slate-700 hover:bg-slate-100"
+                          activeTab === "branches_workers" ? "bg-blue-600 text-white shadow-md shadow-blue-600/30 font-bold" : "text-slate-300 hover:bg-slate-800/80"
                         }`}
                       >
                         <Building className="size-4" />
@@ -3460,7 +3514,7 @@ const handleResetPassword = async (e: React.FormEvent) => {
                       <button
                         onClick={() => { setActiveTab("audit"); setClosingSuccess(null); }}
                         className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer ${
-                          activeTab === "audit" ? "bg-blue-600 text-white shadow-md shadow-blue-600/30 font-bold" : "text-slate-700 hover:bg-slate-100"
+                          activeTab === "audit" ? "bg-blue-600 text-white shadow-md shadow-blue-600/30 font-bold" : "text-slate-300 hover:bg-slate-800/80"
                         }`}
                       >
                         <History className="size-4" />
@@ -3470,15 +3524,15 @@ const handleResetPassword = async (e: React.FormEvent) => {
                       <button
                         onClick={() => { setActiveTab("approvals_security"); setClosingSuccess(null); }}
                         className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer ${
-                          activeTab === "approvals_security" ? "bg-blue-600 text-white shadow-md shadow-blue-600/30 font-bold" : "text-slate-700 hover:bg-slate-100"
+                          activeTab === "approvals_security" ? "bg-blue-600 text-white shadow-md shadow-blue-600/30 font-bold" : "text-slate-300 hover:bg-slate-800/80"
                         }`}
                       >
                         <div className="flex items-center gap-3">
-                          <ShieldAlert className="size-4 text-amber-500 fill-amber-500/10" />
+                          <ShieldAlert className="size-4 text-amber-400 fill-amber-400/10" />
                           <span>Security Approvals</span>
                         </div>
                         {pendingApprovalsCount > 0 && (
-                          <span className="bg-rose-500 text-white text-xs font-bold px-2 py-0.5 rounded-full ring-2 ring-white animate-pulse">
+                          <span className="bg-rose-500 text-white text-xs font-bold px-2 py-0.5 rounded-full ring-2 ring-slate-900 animate-pulse">
                             {pendingApprovalsCount}
                           </span>
                         )}
@@ -3494,71 +3548,71 @@ const handleResetPassword = async (e: React.FormEvent) => {
 
           {/* Quick Realtime Balance widgets in Sidebar */}
           <div className="space-y-4">
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
-              <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3 flex justify-between items-center">
+            <div className="bg-[#0b1329] rounded-xl shadow-sm border border-slate-800 p-4 text-white">
+              <h3 className="text-xs font-bold text-white uppercase tracking-widest mb-3 flex justify-between items-center">
                 <span>MOMO Cash Floats</span>
-                <span className="text-[9px] bg-sky-100 text-sky-800 rounded px-1.5 py-0.5 font-bold font-sans">MOMO</span>
+                <span className="text-[9px] bg-sky-900/60 text-white rounded px-1.5 py-0.5 font-bold font-sans border border-sky-700/50">MOMO</span>
               </h3>
               {currentBranchFloat ? (
                 <div className="space-y-2">
-                  <div className="flex justify-between items-center bg-yellow-50 p-2 rounded-lg border border-yellow-200">
+                  <div className="flex justify-between items-center bg-yellow-950/40 p-2 rounded-lg border border-yellow-800/50">
                     <div className="flex items-center gap-1.5">
                       <span className="h-2 w-2 rounded-full bg-yellow-400"></span>
-                      <span className="text-xs font-bold text-yellow-900">MTN Float</span>
+                      <span className="text-xs font-bold text-white">MTN Float</span>
                     </div>
-                    <span className="text-xs font-mono font-bold text-yellow-950">GHS {currentBranchFloat.mtnFloat?.toLocaleString() || "0"}</span>
+                    <span className="text-xs font-mono font-bold text-white">GHS {currentBranchFloat.mtnFloat?.toLocaleString() || "0"}</span>
                   </div>
 
-                  <div className="flex justify-between items-center bg-red-50 p-2 rounded-lg border border-red-200">
+                  <div className="flex justify-between items-center bg-red-950/40 p-2 rounded-lg border border-red-800/50">
                     <div className="flex items-center gap-1.5">
                       <span className="h-2 w-2 rounded-full bg-red-500"></span>
-                      <span className="text-xs font-bold text-red-900">Telecel Float</span>
+                      <span className="text-xs font-bold text-white">Telecel Float</span>
                     </div>
-                    <span className="text-xs font-mono font-bold text-red-955">GHS {currentBranchFloat.telecelFloat?.toLocaleString() || "0"}</span>
+                    <span className="text-xs font-mono font-bold text-white">GHS {currentBranchFloat.telecelFloat?.toLocaleString() || "0"}</span>
                   </div>
 
-                  <div className="flex justify-between items-center bg-blue-50 p-2 rounded-lg border border-blue-200">
+                  <div className="flex justify-between items-center bg-blue-950/40 p-2 rounded-lg border border-blue-800/50">
                     <div className="flex items-center gap-1.5">
-                      <span className="h-2 w-2 rounded-full bg-blue-600"></span>
-                      <span className="text-xs font-bold text-blue-900">AirtelTigo</span>
+                      <span className="h-2 w-2 rounded-full bg-blue-500"></span>
+                      <span className="text-xs font-bold text-white">AirtelTigo</span>
                     </div>
-                    <span className="text-xs font-mono font-bold text-blue-955">GHS {currentBranchFloat.airtelTigoFloat?.toLocaleString() || "0"}</span>
+                    <span className="text-xs font-mono font-bold text-white">GHS {currentBranchFloat.airtelTigoFloat?.toLocaleString() || "0"}</span>
                   </div>
                 </div>
               ) : (
-                <span className="text-xs text-slate-400">Loading branch MoMo stats...</span>
+                <span className="text-xs text-white">Loading branch MoMo stats...</span>
               )}
             </div>
 
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
-              <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3 flex justify-between items-center">
+            <div className="bg-[#0b1329] rounded-xl shadow-sm border border-slate-800 p-4 text-white">
+              <h3 className="text-xs font-bold text-white uppercase tracking-widest mb-3 flex justify-between items-center">
                 <span>Separate Airtime Wallets</span>
-                <span className="text-[9px] bg-emerald-100 text-emerald-800 rounded px-1.5 py-0.5 font-bold font-sans">Airtime</span>
+                <span className="text-[9px] bg-emerald-900/60 text-white rounded px-1.5 py-0.5 font-bold font-sans border border-emerald-700/50">Airtime</span>
               </h3>
               {currentBranchFloat ? (
                 <div className="space-y-2">
-                  <div className="flex justify-between items-center bg-amber-50 p-2 rounded-lg border border-amber-200">
+                  <div className="flex justify-between items-center bg-amber-950/40 p-2 rounded-lg border border-amber-800/50">
                     <div className="flex items-center gap-1.5">
                       <span className="h-2 w-2 rounded-full bg-amber-400"></span>
-                      <span className="text-xs font-semibold text-amber-900">MTN Airtime</span>
+                      <span className="text-xs font-semibold text-white">MTN Airtime</span>
                     </div>
-                    <span className="text-xs font-mono font-bold text-amber-950 font-sans">GHS {currentBranchFloat.mtnAirtimeFloat?.toLocaleString() || "0"}</span>
+                    <span className="text-xs font-mono font-bold text-white font-sans">GHS {currentBranchFloat.mtnAirtimeFloat?.toLocaleString() || "0"}</span>
                   </div>
 
-                  <div className="flex justify-between items-center bg-rose-50 p-2 rounded-lg border border-rose-200">
+                  <div className="flex justify-between items-center bg-rose-950/40 p-2 rounded-lg border border-rose-800/50">
                     <div className="flex items-center gap-1.5">
                       <span className="h-2 w-2 rounded-full bg-rose-500"></span>
-                      <span className="text-xs font-semibold text-rose-900">Telecel Airtime</span>
+                      <span className="text-xs font-semibold text-white">Telecel Airtime</span>
                     </div>
-                    <span className="text-xs font-mono font-bold text-rose-955 font-sans">GHS {currentBranchFloat.telecelAirtimeFloat?.toLocaleString() || "0"}</span>
+                    <span className="text-xs font-mono font-bold text-white font-sans">GHS {currentBranchFloat.telecelAirtimeFloat?.toLocaleString() || "0"}</span>
                   </div>
 
-                  <div className="flex justify-between items-center bg-teal-50 p-2 rounded-lg border border-teal-200">
+                  <div className="flex justify-between items-center bg-teal-950/40 p-2 rounded-lg border border-teal-800/50">
                     <div className="flex items-center gap-1.5">
-                      <span className="h-2 w-2 rounded-full bg-teal-600"></span>
-                      <span className="text-xs font-semibold text-teal-900">AirtelTigo Airtime</span>
+                      <span className="h-2 w-2 rounded-full bg-teal-400"></span>
+                      <span className="text-xs font-semibold text-white">AirtelTigo Airtime</span>
                     </div>
-                    <span className="text-xs font-mono font-bold text-teal-955 font-sans">GHS {currentBranchFloat.airtelTigoAirtimeFloat?.toLocaleString() || "0"}</span>
+                    <span className="text-xs font-mono font-bold text-white font-sans">GHS {currentBranchFloat.airtelTigoAirtimeFloat?.toLocaleString() || "0"}</span>
                   </div>
                 </div>
               ) : (
@@ -3589,20 +3643,20 @@ const handleResetPassword = async (e: React.FormEvent) => {
                 <motion.div 
                   initial={{ opacity: 0, scale: 0.98 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  className="bg-gradient-to-r from-slate-900 via-indigo-950 to-purple-950 text-white rounded-xl p-3 px-4 shadow-md border border-purple-500/30 flex flex-wrap sm:flex-nowrap items-center justify-between gap-3"
+                  className="bg-black text-white rounded-xl p-3 px-4 shadow-md border border-slate-800 flex flex-wrap sm:flex-nowrap items-center justify-between gap-3"
                 >
                   <div className="flex items-center gap-3">
-                    <div className="size-10 rounded-lg bg-yellow-400/20 text-yellow-300 flex items-center justify-center border border-yellow-400/30 shrink-0">
+                    <div className="size-10 rounded-lg bg-yellow-400/20 text-white flex items-center justify-center border border-yellow-400/30 shrink-0">
                       <Coins className="size-5 text-yellow-400" />
                     </div>
                     <div>
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-[10px] font-black uppercase tracking-wider text-purple-200">Combined Total Capital</span>
+                        <span className="text-[10px] font-black uppercase tracking-wider text-white">Combined Total Capital</span>
                         <span className="text-[9px] bg-yellow-400 text-slate-950 font-extrabold px-1.5 py-0.2 rounded uppercase">
                           Working + External
                         </span>
                       </div>
-                      <div className="text-xl sm:text-2xl font-black font-mono text-yellow-300">
+                      <div className="text-xl sm:text-2xl font-black font-mono text-white">
                         GHS {((stats?.totalWorkingCapital ?? 0) + (stats?.remainingExternalCapital ?? 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
                     </div>
@@ -3610,12 +3664,12 @@ const handleResetPassword = async (e: React.FormEvent) => {
 
                   <div className="flex items-center gap-3 border-t sm:border-t-0 sm:border-l border-slate-700/80 pt-2 sm:pt-0 sm:pl-3 w-full sm:w-auto justify-between sm:justify-start">
                     <div className="text-[10px] space-y-0.5">
-                      <div className="text-slate-300">
-                        Actual Working: <span className="font-mono font-bold text-emerald-300">GHS {(stats?.totalWorkingCapital ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                        <span className="ml-1 text-[9px] text-slate-400 italic">(Admin Only)</span>
+                      <div className="text-white">
+                        Actual Working: <span className="font-mono font-bold text-white">GHS {(stats?.totalWorkingCapital ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        <span className="ml-1 text-[9px] text-white/80 italic">(Admin Only)</span>
                       </div>
-                      <div className="text-purple-300">
-                        External Capital: <span className="font-mono font-bold text-purple-200">GHS {(stats?.remainingExternalCapital ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      <div className="text-white">
+                        External Capital: <span className="font-mono font-bold text-white">GHS {(stats?.remainingExternalCapital ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </div>
                     </div>
 
@@ -3626,7 +3680,7 @@ const handleResetPassword = async (e: React.FormEvent) => {
                         setExtCapError("");
                         setExtCapSuccess("");
                       }}
-                      className="bg-purple-600 hover:bg-purple-500 text-white text-[10px] font-extrabold px-2.5 py-1.5 rounded-lg shadow-sm transition-all cursor-pointer shrink-0 uppercase tracking-wider flex items-center gap-1"
+                      className="bg-[#07010c] hover:bg-[#140522] border border-purple-900/60 text-white text-[10px] font-extrabold px-2.5 py-1.5 rounded-lg shadow-sm transition-all cursor-pointer shrink-0 uppercase tracking-wider flex items-center gap-1"
                       title="Solicit, tap, or mark external capital returned (Admin & Workers)"
                     >
                       <Coins className="size-3.5" />
@@ -3635,6 +3689,92 @@ const handleResetPassword = async (e: React.FormEvent) => {
                   </div>
                 </motion.div>
               </div>
+
+              {/* CONSOLIDATED MOMO FLOAT WALLET SUMMARIES WITH ADMIN PER-BRANCH BREAKDOWNS */}
+              {currentUser?.role === "ADMIN" && stats && (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <motion.div 
+                    whileHover={{ y: -4, scale: 1.025 }}
+                    transition={{ type: "spring", stiffness: 350, damping: 20 }}
+                    className="bg-yellow-500 text-white border border-yellow-400 hover:border-yellow-300 rounded-xl p-4 flex flex-col justify-between shadow-md hover:shadow-lg transition-all duration-300 cursor-default relative overflow-hidden"
+                  >
+                    <div>
+                      <div className="flex justify-between items-center">
+                        <div className="flex items-center gap-2">
+                          <img
+                            src={mtnLogoImg}
+                            alt="MTN Logo"
+                            referrerPolicy="no-referrer"
+                            className="h-6 w-6 object-cover rounded-md border border-yellow-300 shadow-xs"
+                          />
+                          <span className="text-xs font-bold text-white uppercase tracking-wide">MTN Float Balance</span>
+                        </div>
+                        <span className="text-[10px] bg-black/30 text-white border border-white/20 font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider">MoMo</span>
+                      </div>
+                      <div className="mt-2 flex items-center justify-between">
+                        <AnimatedValue value={stats.currentMtnFloat} isCurrency={true} className="text-2xl font-black font-mono text-white drop-shadow-xs" />
+                      </div>
+                    </div>
+                    <div className="mt-2">
+                      <span className="text-[10px] text-white/90 font-semibold block">Consolidated across selected view</span>
+                    </div>
+                  </motion.div>
+
+                  <motion.div 
+                    whileHover={{ y: -4, scale: 1.025 }}
+                    transition={{ type: "spring", stiffness: 350, damping: 20 }}
+                    className="bg-red-600 text-white border border-red-500 hover:border-red-400 rounded-xl p-4 flex flex-col justify-between shadow-md hover:shadow-lg transition-all duration-300 cursor-default relative overflow-hidden"
+                  >
+                    <div>
+                      <div className="flex justify-between items-center">
+                        <div className="flex items-center gap-2">
+                          <img
+                            src={telecelLogoImg}
+                            alt="Telecel Logo"
+                            referrerPolicy="no-referrer"
+                            className="h-6 w-6 object-cover rounded-full border border-white/80 shadow-xs bg-white"
+                          />
+                          <span className="text-xs font-bold text-white uppercase tracking-wide">Telecel Float Balance</span>
+                        </div>
+                        <span className="text-[10px] bg-black/30 text-white border border-white/20 font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider">MoMo</span>
+                      </div>
+                      <div className="mt-2 flex items-center justify-between">
+                        <AnimatedValue value={stats.currentTelecelFloat} isCurrency={true} className="text-2xl font-black font-mono text-white drop-shadow-xs" />
+                      </div>
+                    </div>
+                    <div className="mt-2">
+                      <span className="text-[10px] text-white/90 font-semibold block">Consolidated across selected view</span>
+                    </div>
+                  </motion.div>
+
+                  <motion.div 
+                    whileHover={{ y: -4, scale: 1.025 }}
+                    transition={{ type: "spring", stiffness: 350, damping: 20 }}
+                    className="bg-[#002FA7] text-white border border-[#1a44bc] hover:border-[#335edc] rounded-xl p-4 flex flex-col justify-between shadow-md hover:shadow-lg transition-all duration-300 cursor-default relative overflow-hidden"
+                  >
+                    <div>
+                      <div className="flex justify-between items-center">
+                        <div className="flex items-center gap-2">
+                          <img
+                            src={airtelTigoLogoImg}
+                            alt="AirtelTigo Logo"
+                            referrerPolicy="no-referrer"
+                            className="h-6 w-6 object-cover rounded-full border border-white/80 shadow-xs bg-white"
+                          />
+                          <span className="text-xs font-bold text-white uppercase tracking-wide">AT / AirtelTigo Float</span>
+                        </div>
+                        <span className="text-[10px] bg-black/30 text-white border border-white/20 font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider">MoMo</span>
+                      </div>
+                      <div className="mt-2 flex items-center justify-between">
+                        <AnimatedValue value={stats.currentAirtelTigoFloat} isCurrency={true} className="text-2xl font-black font-mono text-white drop-shadow-xs" />
+                      </div>
+                    </div>
+                    <div className="mt-2">
+                      <span className="text-[10px] text-white/90 font-semibold block">Consolidated across selected view</span>
+                    </div>
+                  </motion.div>
+                </div>
+              )}
 
               {/* ADMIN PAST DUE ALERT BANNER */}
               {currentUser?.role === "ADMIN" && overdueDebtsCount > 0 && (
@@ -3833,7 +3973,7 @@ const handleResetPassword = async (e: React.FormEvent) => {
 
               {/* STATS CARDS */}
               {stats ? (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   {/* TOTAL WORKING CAPITAL CARD */}
                   <motion.div 
                     whileHover={{ y: -6, scale: 1.025 }} 
@@ -3845,7 +3985,7 @@ const handleResetPassword = async (e: React.FormEvent) => {
                     </div>
                     <div>
                       <div className="flex items-center justify-between gap-1 flex-wrap">
-                        <span className="text-[11px] font-black text-indigo-300 uppercase tracking-wider flex items-center gap-1">
+                        <span className="text-[11px] font-black text-white uppercase tracking-wider flex items-center gap-1">
                           <Coins className="size-3.5 text-yellow-400" /> Working Capital
                         </span>
                         <span className="text-[9px] bg-yellow-400 text-slate-950 font-extrabold px-1.5 py-0.5 rounded uppercase tracking-tight">
@@ -3856,32 +3996,32 @@ const handleResetPassword = async (e: React.FormEvent) => {
                         <AnimatedValue 
                           value={stats.totalWorkingCapital ?? (stats.outstandingDebts + (stats.currentMtnFloat + stats.currentTelecelFloat + stats.currentAirtelTigoFloat) + stats.currentCashBalance)} 
                           isCurrency={true} 
-                          className="text-2xl font-black font-mono text-yellow-300" 
+                          className="text-2xl font-black font-mono text-white" 
                         />
                       </div>
                     </div>
-                    <div className="mt-2.5 pt-2 border-t border-slate-800 text-[10px] text-slate-300 font-medium space-y-1">
+                    <div className="mt-2.5 pt-2 border-t border-slate-800 text-[10px] text-white font-medium space-y-1">
                       <div className="flex justify-between items-center">
-                        <span className="text-slate-400">• Debts Entered:</span>
-                        <span className="font-mono font-bold text-amber-300">GHS {stats.outstandingDebts.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        <span className="text-white/80">• Debts Entered:</span>
+                        <span className="font-mono font-bold text-white">GHS {stats.outstandingDebts.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </div>
                       <div className="flex justify-between items-center">
-                        <span className="text-slate-400">• All Floats:</span>
-                        <span className="font-mono font-bold text-blue-300">GHS {(stats.currentMtnFloat + stats.currentTelecelFloat + stats.currentAirtelTigoFloat).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        <span className="text-white/80">• All Floats:</span>
+                        <span className="font-mono font-bold text-white">GHS {(stats.currentMtnFloat + stats.currentTelecelFloat + stats.currentAirtelTigoFloat).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </div>
                       <div className="flex justify-between items-center">
-                        <span className="text-slate-400">• Physical Cash:</span>
-                        <span className="font-mono font-bold text-emerald-300">GHS {stats.currentCashBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        <span className="text-white/80">• Physical Cash:</span>
+                        <span className="font-mono font-bold text-white">GHS {stats.currentCashBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </div>
 
-                      {/* ADMIN PER-BRANCH BREAKDOWN ON CARD */}
+                      {/* ADMIN PER-BRANCH CAPITAL BREAKDOWN */}
                       {currentUser?.role === "ADMIN" && stats?.branchNetProfits && stats.branchNetProfits.length > 0 && (
                         <div className="mt-2 pt-1.5 border-t border-slate-800 space-y-0.5">
-                          <div className="text-[9px] font-black text-indigo-300 uppercase tracking-widest">Branch Capital:</div>
+                          <div className="text-[9px] font-black text-white uppercase tracking-widest">Branch Capital:</div>
                           {stats.branchNetProfits.map(b => (
                             <div key={b.branchId} className="flex justify-between items-center text-[9.5px]">
-                              <span className="text-slate-300 truncate max-w-[95px]">• {b.branchName}:</span>
-                              <span className="font-mono font-bold text-yellow-300">GHS {(b.workingCapital ?? 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
+                              <span className="text-white/90 truncate max-w-[95px]">• {b.branchName}:</span>
+                              <span className="font-mono font-bold text-white">GHS {(b.workingCapital ?? 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
                             </div>
                           ))}
                         </div>
@@ -3893,14 +4033,14 @@ const handleResetPassword = async (e: React.FormEvent) => {
                   <motion.div 
                     whileHover={{ y: -6, scale: 1.025 }} 
                     transition={{ type: "spring", stiffness: 350, damping: 20 }}
-                    className="bg-purple-50 border-2 border-purple-300 hover:border-purple-400 rounded-xl p-4 flex flex-col justify-between shadow-sm cursor-default hover:shadow-lg transition-all duration-300 relative overflow-hidden"
+                    className="bg-black text-white border-2 border-slate-800 hover:border-purple-500 rounded-xl p-4 flex flex-col justify-between shadow-md cursor-default hover:shadow-xl transition-all duration-300 relative overflow-hidden"
                   >
                     <div>
                       <div className="flex items-center justify-between gap-1 flex-wrap">
-                        <span className="text-[11px] font-black text-purple-900 uppercase tracking-wider flex items-center gap-1">
-                          <Coins className="size-3.5 text-purple-600" /> External Capital
+                        <span className="text-[11px] font-black text-white uppercase tracking-wider flex items-center gap-1">
+                          <Coins className="size-3.5 text-purple-400" /> External Capital
                         </span>
-                        <span className="text-[9px] bg-purple-200 text-purple-950 font-extrabold px-1.5 py-0.5 rounded uppercase tracking-tight">
+                        <span className="text-[9px] bg-purple-900/80 text-purple-200 border border-purple-700/50 font-extrabold px-1.5 py-0.5 rounded uppercase tracking-tight">
                           Solicited Reserve
                         </span>
                       </div>
@@ -3908,22 +4048,22 @@ const handleResetPassword = async (e: React.FormEvent) => {
                         <AnimatedValue 
                           value={stats.remainingExternalCapital ?? 0} 
                           isCurrency={true} 
-                          className="text-2xl font-black font-mono text-purple-950" 
+                          className="text-2xl font-black font-mono text-white" 
                         />
                       </div>
                     </div>
-                    <div className="mt-2 pt-2 border-t border-purple-200/80 text-[10px] text-purple-900 font-medium space-y-1">
+                    <div className="mt-2 pt-2 border-t border-slate-800 text-[10px] text-white font-medium space-y-1">
                       <div className="flex justify-between items-center">
-                        <span className="text-purple-700">💳 Electronic Float:</span>
-                        <span className="font-mono font-bold text-purple-950">GHS {(stats.externalElectronicCapital ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        <span className="text-white/80">💳 Electronic Float:</span>
+                        <span className="font-mono font-bold text-white">GHS {(stats.externalElectronicCapital ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </div>
                       <div className="flex justify-between items-center">
-                        <span className="text-purple-700">💵 Physical Cash:</span>
-                        <span className="font-mono font-bold text-purple-950">GHS {(stats.externalPhysicalCapital ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        <span className="text-white/80">💵 Physical Cash:</span>
+                        <span className="font-mono font-bold text-white">GHS {(stats.externalPhysicalCapital ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </div>
                       <div className="flex justify-between items-center">
-                        <span className="text-purple-600">⚡ Auto-Tapped:</span>
-                        <span className="font-mono font-bold text-amber-700">GHS {(stats.tappedExternalCapital ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        <span className="text-white/80">⚡ Auto-Tapped:</span>
+                        <span className="font-mono font-bold text-amber-300">GHS {(stats.tappedExternalCapital ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </div>
                       <button
                         type="button"
@@ -3932,7 +4072,7 @@ const handleResetPassword = async (e: React.FormEvent) => {
                           setExtCapError("");
                           setExtCapSuccess("");
                         }}
-                        className="w-full mt-2 py-1.5 px-2 bg-purple-700 hover:bg-purple-800 text-white font-extrabold text-[10px] uppercase rounded-lg shadow-xs transition-all cursor-pointer flex items-center justify-center gap-1"
+                        className="w-full mt-2 py-1.5 px-2 bg-purple-700 hover:bg-purple-600 text-white font-extrabold text-[10px] uppercase rounded-lg shadow-xs transition-all cursor-pointer flex items-center justify-center gap-1"
                       >
                         <Plus className="size-3" />
                         <span>Manage / Mark Returned</span>
@@ -3951,7 +4091,7 @@ const handleResetPassword = async (e: React.FormEvent) => {
                       damping: 20,
                       scale: { duration: 0.6 }
                     }}
-                    className="relative bg-emerald-50 border border-emerald-100 hover:border-emerald-300 rounded-xl p-4 flex flex-col justify-between shadow-sm cursor-default hover:shadow-lg transition-all duration-300 overflow-hidden"
+                    className="relative bg-white border border-slate-200 hover:border-slate-300 rounded-xl p-4 flex flex-col justify-between shadow-sm cursor-default hover:shadow-lg transition-all duration-300 overflow-hidden"
                   >
                     <AnimatePresence>
                       {profitHighlight && (
@@ -3965,64 +4105,62 @@ const handleResetPassword = async (e: React.FormEvent) => {
                       )}
                     </AnimatePresence>
                     <div>
-                      <span className="text-xs font-bold text-emerald-800 uppercase tracking-wide">Today's Profit</span>
+                      <span className="text-xs font-bold text-slate-800 uppercase tracking-wide">Today's Profit</span>
                       <div className="mt-1 flex items-center">
-                        <AnimatedValue value={stats.todayProfit} isCurrency={true} className="text-2xl font-black font-mono text-emerald-900" />
+                        <AnimatedValue value={stats.todayProfit} isCurrency={true} className="text-2xl font-black font-mono text-slate-900" />
                       </div>
                     </div>
                     <div className="mt-2">
-                      <span className="text-[10px] text-emerald-700/80 font-medium block">Includes bulk airtime margin</span>
-                      {/* ADMIN PER-BRANCH PROFIT BREAKDOWN */}
+                      <span className="text-[10px] text-slate-600 font-medium block">Includes bulk airtime margin</span>
                       {currentUser?.role === "ADMIN" && stats?.branchNetProfits && stats.branchNetProfits.length > 0 && (
-                        <div className="mt-2 pt-1.5 border-t border-emerald-200 space-y-0.5">
-                          <div className="text-[9px] font-black text-emerald-800 uppercase tracking-widest">Branch Profit:</div>
+                        <div className="mt-2 pt-1.5 border-t border-slate-200 space-y-0.5">
+                          <div className="text-[9px] font-black text-slate-800 uppercase tracking-widest">Branch Profit:</div>
                           {stats.branchNetProfits.map(b => (
                             <div key={b.branchId} className="flex justify-between items-center text-[9.5px]">
-                              <span className="text-emerald-900 truncate max-w-[95px]">• {b.branchName}:</span>
-                              <span className="font-mono font-bold text-emerald-950">GHS {(b.todayProfit ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                              <span className="text-slate-700 truncate max-w-[95px]">• {b.branchName}:</span>
+                              <span className="font-mono font-bold text-slate-900">GHS {(b.todayProfit ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                             </div>
                           ))}
                         </div>
                       )}
                     </div>
                   </motion.div>
- 
+
                   <motion.div 
                     whileHover={{ y: -6, scale: 1.025 }} 
                     transition={{ type: "spring", stiffness: 350, damping: 20 }}
-                    className="bg-blue-50 border border-blue-100 hover:border-blue-300 rounded-xl p-4 flex flex-col justify-between shadow-sm cursor-default hover:shadow-lg transition-all duration-300"
+                    className="bg-white border border-slate-200 hover:border-slate-300 rounded-xl p-4 flex flex-col justify-between shadow-sm cursor-default hover:shadow-lg transition-all duration-300"
                   >
                     <div>
-                      <span className="text-xs font-bold text-blue-800 uppercase tracking-wide">Today's Tx Vol.</span>
+                      <span className="text-xs font-bold text-slate-800 uppercase tracking-wide">Today's Tx Vol.</span>
                       <div className="mt-1 flex items-center">
-                        <AnimatedValue value={stats.todayTransactionsCount} className="text-2xl font-black font-mono text-blue-900" />
+                        <AnimatedValue value={stats.todayTransactionsCount} className="text-2xl font-black font-mono text-slate-900" />
                       </div>
                     </div>
                     <div className="mt-2">
-                      <span className="text-[10px] text-blue-700/80 font-medium block">Entries across system</span>
-                      {/* ADMIN PER-BRANCH TX VOL BREAKDOWN */}
+                      <span className="text-[10px] text-slate-600 font-medium block">Entries across system</span>
                       {currentUser?.role === "ADMIN" && stats?.branchNetProfits && stats.branchNetProfits.length > 0 && (
-                        <div className="mt-2 pt-1.5 border-t border-blue-200 space-y-0.5">
-                          <div className="text-[9px] font-black text-blue-800 uppercase tracking-widest">Branch Entries:</div>
+                        <div className="mt-2 pt-1.5 border-t border-slate-200 space-y-0.5">
+                          <div className="text-[9px] font-black text-slate-800 uppercase tracking-widest">Branch Entries:</div>
                           {stats.branchNetProfits.map(b => (
                             <div key={b.branchId} className="flex justify-between items-center text-[9.5px]">
-                              <span className="text-blue-900 truncate max-w-[95px]">• {b.branchName}:</span>
-                              <span className="font-mono font-bold text-blue-950">{(b.todayTxCount ?? 0)} txs</span>
+                              <span className="text-slate-700 truncate max-w-[95px]">• {b.branchName}:</span>
+                              <span className="font-mono font-bold text-slate-900">{(b.todayTxCount ?? 0)} txs</span>
                             </div>
                           ))}
                         </div>
                       )}
                     </div>
                   </motion.div>
- 
+
                   <motion.div 
                     whileHover={{ y: -6, scale: 1.025 }} 
                     transition={{ type: "spring", stiffness: 350, damping: 20 }}
-                    className="bg-amber-50 border border-amber-100 hover:border-amber-300 rounded-xl p-4 flex flex-col justify-between shadow-sm cursor-default hover:shadow-lg transition-all duration-300"
+                    className="bg-white border border-slate-200 hover:border-slate-300 rounded-xl p-4 flex flex-col justify-between shadow-sm cursor-default hover:shadow-lg transition-all duration-300"
                   >
                     <div>
                       <div className="flex items-center justify-between gap-1.5 flex-wrap">
-                        <span className="text-xs font-bold text-amber-800 uppercase tracking-wide">Outstanding Debts</span>
+                        <span className="text-xs font-bold text-slate-800 uppercase tracking-wide">Outstanding Debts</span>
                         {currentUser?.role === "ADMIN" && overdueDebtsCount > 0 && (
                           <span className="bg-red-600 text-white text-[9px] uppercase font-mono font-black px-1.5 py-0.5 rounded-full animate-bounce shrink-0" title="Contains Past Due debts!">
                             {overdueDebtsCount} PAST DUE
@@ -4030,47 +4168,45 @@ const handleResetPassword = async (e: React.FormEvent) => {
                         )}
                       </div>
                       <div className="mt-1 flex items-center">
-                        <AnimatedValue value={stats.outstandingDebts} isCurrency={true} className="text-2xl font-black font-mono text-amber-900" />
+                        <AnimatedValue value={stats.outstandingDebts} isCurrency={true} className="text-2xl font-black font-mono text-slate-900" />
                       </div>
                     </div>
                     <div className="mt-2">
-                      <span className="text-[10px] text-amber-700/80 font-semibold block">GHS active in ledger</span>
-                      {/* ADMIN PER-BRANCH DEBTS BREAKDOWN */}
+                      <span className="text-[10px] text-slate-600 font-semibold block">GHS active in ledger</span>
                       {currentUser?.role === "ADMIN" && stats?.branchNetProfits && stats.branchNetProfits.length > 0 && (
-                        <div className="mt-2 pt-1.5 border-t border-amber-200 space-y-0.5">
-                          <div className="text-[9px] font-black text-amber-800 uppercase tracking-widest">Branch Debts:</div>
+                        <div className="mt-2 pt-1.5 border-t border-slate-200 space-y-0.5">
+                          <div className="text-[9px] font-black text-slate-800 uppercase tracking-widest">Branch Debts:</div>
                           {stats.branchNetProfits.map(b => (
                             <div key={b.branchId} className="flex justify-between items-center text-[9.5px]">
-                              <span className="text-amber-900 truncate max-w-[95px]">• {b.branchName}:</span>
-                              <span className="font-mono font-bold text-amber-950">GHS {(b.outstandingDebts ?? 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
+                              <span className="text-slate-700 truncate max-w-[95px]">• {b.branchName}:</span>
+                              <span className="font-mono font-bold text-slate-900">GHS {(b.outstandingDebts ?? 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
                             </div>
                           ))}
                         </div>
                       )}
                     </div>
                   </motion.div>
- 
+
                   <motion.div 
                     whileHover={{ y: -6, scale: 1.025 }} 
                     transition={{ type: "spring", stiffness: 350, damping: 20 }}
-                    className="bg-red-50 border border-red-100 hover:border-red-300 rounded-xl p-4 flex flex-col justify-between shadow-sm cursor-default hover:shadow-lg transition-all duration-300"
+                    className="bg-white border border-slate-200 hover:border-slate-300 rounded-xl p-4 flex flex-col justify-between shadow-sm cursor-default hover:shadow-lg transition-all duration-300"
                   >
                     <div>
-                      <span className="text-xs font-bold text-red-800 uppercase tracking-wide">Expected Cash</span>
+                      <span className="text-xs font-bold text-slate-800 uppercase tracking-wide">Expected Cash</span>
                       <div className="mt-1 flex items-center">
-                        <AnimatedValue value={stats.currentCashBalance} isCurrency={true} className="text-2xl font-black font-mono text-red-900" />
+                        <AnimatedValue value={stats.currentCashBalance} isCurrency={true} className="text-2xl font-black font-mono text-slate-900" />
                       </div>
                     </div>
                     <div className="mt-2">
-                      <span className="text-[10px] text-red-700/80 font-medium block">Float adjusted target</span>
-                      {/* ADMIN PER-BRANCH CASH BREAKDOWN */}
+                      <span className="text-[10px] text-slate-600 font-medium block">Float adjusted target</span>
                       {currentUser?.role === "ADMIN" && stats?.branchNetProfits && stats.branchNetProfits.length > 0 && (
-                        <div className="mt-2 pt-1.5 border-t border-red-200 space-y-0.5">
-                          <div className="text-[9px] font-black text-red-800 uppercase tracking-widest">Branch Cash:</div>
+                        <div className="mt-2 pt-1.5 border-t border-slate-200 space-y-0.5">
+                          <div className="text-[9px] font-black text-slate-800 uppercase tracking-widest">Branch Cash:</div>
                           {stats.branchNetProfits.map(b => (
                             <div key={b.branchId} className="flex justify-between items-center text-[9.5px]">
-                              <span className="text-red-900 truncate max-w-[95px]">• {b.branchName}:</span>
-                              <span className="font-mono font-bold text-red-950">GHS {(b.cashBalance ?? 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
+                              <span className="text-slate-700 truncate max-w-[95px]">• {b.branchName}:</span>
+                              <span className="font-mono font-bold text-slate-900">GHS {(b.cashBalance ?? 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
                             </div>
                           ))}
                         </div>
@@ -4080,101 +4216,6 @@ const handleResetPassword = async (e: React.FormEvent) => {
                 </div>
               ) : (
                 <div className="text-center py-6 text-slate-500">Retrieving stats...</div>
-              )}
-
-              {/* CONSOLIDATED MOMO FLOAT WALLET SUMMARIES WITH ADMIN PER-BRANCH BREAKDOWNS */}
-              {currentUser?.role === "ADMIN" && stats && (
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-4">
-                  <motion.div 
-                    whileHover={{ y: -4, scale: 1.025 }}
-                    transition={{ type: "spring", stiffness: 350, damping: 20 }}
-                    className="bg-yellow-50 border border-yellow-200 hover:border-yellow-400 rounded-xl p-4 flex flex-col justify-between shadow-sm hover:shadow-md transition-all duration-300 cursor-default"
-                  >
-                    <div>
-                      <div className="flex justify-between items-center">
-                        <span className="text-xs font-bold text-yellow-800 uppercase tracking-wide">MTN Float Balance</span>
-                        <span className="text-[10px] bg-yellow-200 text-yellow-900 font-bold px-1.5 py-0.5 rounded">MoMo</span>
-                      </div>
-                      <div className="mt-1 flex items-center">
-                        <AnimatedValue value={stats.currentMtnFloat} isCurrency={true} className="text-xl font-black font-mono text-yellow-950" />
-                      </div>
-                    </div>
-                    <div className="mt-2">
-                      <span className="text-[9px] text-yellow-800/80 font-medium block">Consolidated across selected view</span>
-                      {stats.branchNetProfits && stats.branchNetProfits.length > 0 && (
-                        <div className="mt-2 pt-1.5 border-t border-yellow-200 space-y-0.5">
-                          <div className="text-[9px] font-black text-yellow-800 uppercase tracking-widest">Per Branch MTN:</div>
-                          {stats.branchNetProfits.map(b => (
-                            <div key={b.branchId} className="flex justify-between items-center text-[9.5px]">
-                              <span className="text-yellow-900 truncate max-w-[120px]">• {b.branchName}:</span>
-                              <span className="font-mono font-bold text-yellow-950">GHS {(b.mtnFloat ?? 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </motion.div>
-
-                  <motion.div 
-                    whileHover={{ y: -4, scale: 1.025 }}
-                    transition={{ type: "spring", stiffness: 350, damping: 20 }}
-                    className="bg-sky-50 border border-sky-200 hover:border-sky-400 rounded-xl p-4 flex flex-col justify-between shadow-sm hover:shadow-md transition-all duration-300 cursor-default"
-                  >
-                    <div>
-                      <div className="flex justify-between items-center">
-                        <span className="text-xs font-bold text-sky-800 uppercase tracking-wide">Telecel Float Balance</span>
-                        <span className="text-[10px] bg-sky-200 text-sky-900 font-bold px-1.5 py-0.5 rounded">MoMo</span>
-                      </div>
-                      <div className="mt-1 flex items-center">
-                        <AnimatedValue value={stats.currentTelecelFloat} isCurrency={true} className="text-xl font-black font-mono text-sky-950" />
-                      </div>
-                    </div>
-                    <div className="mt-2">
-                      <span className="text-[9px] text-sky-800/80 font-medium block">Consolidated across selected view</span>
-                      {stats.branchNetProfits && stats.branchNetProfits.length > 0 && (
-                        <div className="mt-2 pt-1.5 border-t border-sky-200 space-y-0.5">
-                          <div className="text-[9px] font-black text-sky-800 uppercase tracking-widest">Per Branch Telecel:</div>
-                          {stats.branchNetProfits.map(b => (
-                            <div key={b.branchId} className="flex justify-between items-center text-[9.5px]">
-                              <span className="text-sky-900 truncate max-w-[120px]">• {b.branchName}:</span>
-                              <span className="font-mono font-bold text-sky-950">GHS {(b.telecelFloat ?? 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </motion.div>
-
-                  <motion.div 
-                    whileHover={{ y: -4, scale: 1.025 }}
-                    transition={{ type: "spring", stiffness: 350, damping: 20 }}
-                    className="bg-rose-50 border border-rose-200 hover:border-rose-400 rounded-xl p-4 flex flex-col justify-between shadow-sm hover:shadow-md transition-all duration-300 cursor-default"
-                  >
-                    <div>
-                      <div className="flex justify-between items-center">
-                        <span className="text-xs font-bold text-rose-800 uppercase tracking-wide">AirtelTigo Float Balance</span>
-                        <span className="text-[10px] bg-rose-200 text-rose-900 font-bold px-1.5 py-0.5 rounded">MoMo</span>
-                      </div>
-                      <div className="mt-1 flex items-center">
-                        <AnimatedValue value={stats.currentAirtelTigoFloat} isCurrency={true} className="text-xl font-black font-mono text-rose-950" />
-                      </div>
-                    </div>
-                    <div className="mt-2">
-                      <span className="text-[9px] text-rose-800/80 font-medium block">Consolidated across selected view</span>
-                      {stats.branchNetProfits && stats.branchNetProfits.length > 0 && (
-                        <div className="mt-2 pt-1.5 border-t border-rose-200 space-y-0.5">
-                          <div className="text-[9px] font-black text-rose-800 uppercase tracking-widest">Per Branch AirtelTigo:</div>
-                          {stats.branchNetProfits.map(b => (
-                            <div key={b.branchId} className="flex justify-between items-center text-[9.5px]">
-                              <span className="text-rose-900 truncate max-w-[120px]">• {b.branchName}:</span>
-                              <span className="font-mono font-bold text-rose-950">GHS {(b.airtelTigoFloat ?? 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </motion.div>
-                </div>
               )}
 
               {/* DEDICATED SEPARATE BRANCH PERFORMANCE TILES FOR ADMIN */}
@@ -4255,14 +4296,10 @@ const handleResetPassword = async (e: React.FormEvent) => {
               )}
 
               {stats && (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mt-4 text-xs font-semibold text-slate-600 bg-slate-50 p-4 rounded-xl border border-slate-250">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4 text-xs font-semibold text-slate-600 bg-slate-50 p-4 rounded-xl border border-slate-250">
                   <div className="flex justify-between p-2 bg-white rounded shadow-sm">
                     <span>Total Deposit Vol:</span>
                     <span className="font-bold text-navy-dark font-mono">GHS {stats.totalDeposits.toLocaleString()}</span>
-                  </div>
-                  <div className="flex justify-between p-2 bg-white rounded shadow-sm">
-                    <span>Total Withdrawal Vol:</span>
-                    <span className="font-bold text-navy-dark font-mono">GHS {stats.totalWithdrawals.toLocaleString()}</span>
                   </div>
                   <div className="flex justify-between p-2 bg-white rounded shadow-sm">
                     <span>Total Send money:</span>
@@ -5393,6 +5430,16 @@ const handleResetPassword = async (e: React.FormEvent) => {
                       <p className="text-[10px] text-slate-400 mt-0.5">Track, audit, and clear outstanding customer loan balances.</p>
                     </div>
                     <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => handleExportDebtsPDFHandler("download")}
+                        className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-all cursor-pointer shadow-xs shrink-0"
+                        title="Download Debts PDF Report"
+                      >
+                        <Download className="size-3.5" />
+                        <span>Export PDF</span>
+                      </button>
+
                       {/* Searchable Branch Filter Dropdown */}
                       <div className="relative shrink-0">
                         <button
@@ -5779,11 +5826,18 @@ const handleResetPassword = async (e: React.FormEvent) => {
 
                 <div className="flex gap-2 shrink-0">
                   <button
+                    onClick={() => handleExportStatementPDFHandler("download")}
+                    className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded shadow-xs cursor-pointer transition-all"
+                  >
+                    <Download className="size-4" />
+                    <span>Download PDF Statement</span>
+                  </button>
+                  <button
                     onClick={printReport}
-                    className="flex items-center gap-1.5 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold text-xs rounded border cursor-pointer border-slate-300"
+                    className="flex items-center gap-1.5 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold text-xs rounded border cursor-pointer border-slate-300 transition-all"
                   >
                     <Printer className="size-4" />
-                    <span>Print PDF/Statement</span>
+                    <span>Print PDF Statement</span>
                   </button>
                 </div>
               </div>
@@ -5839,11 +5893,11 @@ const handleResetPassword = async (e: React.FormEvent) => {
                             Admin Only Action
                           </span>
                           <h3 className="text-lg font-bold tracking-tight text-white flex items-center gap-1.5">
-                            Offline Auditing & Master CSV Export
+                            Offline Auditing & Master Data PDF Export
                           </h3>
                         </div>
                         <p className="text-slate-300 text-xs mt-1">
-                          Consolidated raw worksheet downloader. Data encoded using UTF-8 (BOM included) for absolute compatibility with Microsoft Excel, macOS Numbers, and Google Sheets.
+                          Download official vector PDF statement reports or raw CSV data worksheets for offline auditing.
                         </p>
                       </div>
                     </div>
@@ -5853,18 +5907,18 @@ const handleResetPassword = async (e: React.FormEvent) => {
                       <div className="bg-white/[0.04] hover:bg-white/[0.06] transition-all border border-white/[0.08] p-4 rounded-lg flex flex-col justify-between">
                         <div>
                           <div className="flex justify-between items-start mb-2">
-                            <span className="text-[10px] font-mono tracking-wider text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded font-bold uppercase">
-                              transactions.csv
+                            <span className="text-[10px] font-mono tracking-wider text-blue-300 bg-blue-500/20 px-2 py-0.5 rounded font-bold uppercase">
+                              transactions.pdf
                             </span>
                           </div>
                           <h4 className="text-xs font-bold text-slate-200">Historical MOMO & Airtime Entries</h4>
                           <p className="text-[11px] text-slate-400 mt-1 mb-3">
-                            Includes absolute ID, operator records, commissions, statuses, and custom telephone numbers.
+                            Includes transaction IDs, operator records, commissions, statuses, and phone numbers.
                           </p>
                         </div>
                         <div className="space-y-1.5">
                           <button
-                            onClick={() => handleExportTransactionsCSV("ALL")}
+                            onClick={() => handleExportTransactionsPDFHandler("ALL", "download")}
                             disabled={isExportingTxs}
                             className="w-full flex items-center justify-center gap-1.5 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-600/50 text-white text-[11px] font-bold rounded shadow transition-all cursor-pointer"
                           >
@@ -5873,24 +5927,24 @@ const handleResetPassword = async (e: React.FormEvent) => {
                             ) : (
                               <Download className="size-3.5" />
                             )}
-                            <span>All Transactions ({transactions.length})</span>
+                            <span>Download PDF ({transactions.length} Txs)</span>
                           </button>
                           <div className="grid grid-cols-2 gap-1.5">
                             <button
-                              onClick={() => handleExportTransactionsCSV("MOMO")}
+                              onClick={() => handleExportTransactionsPDFHandler("MOMO", "download")}
                               disabled={isExportingTxs}
                               className="flex items-center justify-center gap-1 py-1.5 bg-sky-700 hover:bg-sky-600 disabled:bg-sky-700/50 text-white text-[10px] font-bold rounded transition-all cursor-pointer"
                             >
                               <Download className="size-3" />
-                              <span>MoMo Only ({transactions.filter(t => t.type !== "airtime").length})</span>
+                              <span>MoMo PDF ({transactions.filter(t => t.type !== "airtime").length})</span>
                             </button>
                             <button
-                              onClick={() => handleExportTransactionsCSV("AIRTIME")}
+                              onClick={() => handleExportTransactionsPDFHandler("AIRTIME", "download")}
                               disabled={isExportingTxs}
                               className="flex items-center justify-center gap-1 py-1.5 bg-emerald-700 hover:bg-emerald-600 disabled:bg-emerald-700/50 text-white text-[10px] font-bold rounded transition-all cursor-pointer"
                             >
                               <Download className="size-3" />
-                              <span>Airtime Only ({transactions.filter(t => t.type === "airtime").length})</span>
+                              <span>Airtime PDF ({transactions.filter(t => t.type === "airtime").length})</span>
                             </button>
                           </div>
                         </div>
@@ -5900,64 +5954,74 @@ const handleResetPassword = async (e: React.FormEvent) => {
                       <div className="bg-white/[0.04] hover:bg-white/[0.06] transition-all border border-white/[0.08] p-4 rounded-lg flex flex-col justify-between">
                         <div>
                           <div className="flex justify-between items-start mb-2">
-                            <span className="text-[10px] font-mono tracking-wider text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded font-bold uppercase">
-                              debt_records.csv
+                            <span className="text-[10px] font-mono tracking-wider text-blue-300 bg-blue-500/20 px-2 py-0.5 rounded font-bold uppercase">
+                              debt_ledger.pdf
                             </span>
                           </div>
                           <h4 className="text-xs font-bold text-slate-200">Worker-Created Debts Tracker</h4>
                           <p className="text-[11px] text-slate-400 mt-1 mb-4">
-                            Includes outstanding loans, borrower phone numbers, maturity due dates, recorded-by operators, and settlement clearances.
+                            Includes outstanding loans, borrower phone numbers, due dates, operators, and settlement status.
                           </p>
                         </div>
-                        <button
-                          onClick={handleExportDebtsCSV}
-                          disabled={isExportingDebts}
-                          className="w-full flex items-center justify-center gap-1.5 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-600/50 text-white text-xs font-bold rounded shadow transition-all cursor-pointer"
-                        >
-                          {isExportingDebts ? (
-                            <>
+                        <div className="grid grid-cols-2 gap-1.5">
+                          <button
+                            onClick={() => handleExportDebtsPDFHandler("download")}
+                            disabled={isExportingDebts}
+                            className="flex items-center justify-center gap-1.5 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-600/50 text-white text-xs font-bold rounded shadow transition-all cursor-pointer"
+                          >
+                            {isExportingDebts ? (
                               <RefreshCw className="size-3.5 animate-spin" />
-                              <span>Exporting...</span>
-                            </>
-                          ) : (
-                            <>
+                            ) : (
                               <Download className="size-3.5" />
-                              <span>Download Loan Ledger ({debts.length})</span>
-                            </>
-                          )}
-                        </button>
+                            )}
+                            <span>PDF ({debts.length})</span>
+                          </button>
+                          <button
+                            onClick={handleExportDebtsCSV}
+                            disabled={isExportingDebts}
+                            className="flex items-center justify-center gap-1 py-2 bg-slate-800 hover:bg-slate-700 disabled:bg-slate-800/50 text-white text-xs font-bold rounded transition-all cursor-pointer"
+                          >
+                            <FileSpreadsheet className="size-3.5" />
+                            <span>CSV Data</span>
+                          </button>
+                        </div>
                       </div>
 
                       {/* SHIFT CLOSED CARD */}
                       <div className="bg-white/[0.04] hover:bg-white/[0.06] transition-all border border-white/[0.08] p-4 rounded-lg flex flex-col justify-between">
                         <div>
                           <div className="flex justify-between items-start mb-2">
-                            <span className="text-[10px] font-mono tracking-wider text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded font-bold uppercase">
-                              shift_reports.csv
+                            <span className="text-[10px] font-mono tracking-wider text-blue-300 bg-blue-500/20 px-2 py-0.5 rounded font-bold uppercase">
+                              shift_reports.pdf
                             </span>
                           </div>
                           <h4 className="text-xs font-bold text-slate-200">Reconciled Shift Closings</h4>
                           <p className="text-[11px] text-slate-400 mt-1 mb-4">
-                            Detailed records of physical starting floats, expected drawer maths, operator cash handovers, and final discrepancies.
+                            Detailed records of physical starting floats, expected drawer maths, cash handovers, and final discrepancies.
                           </p>
                         </div>
-                        <button
-                          onClick={handleExportShiftsCSV}
-                          disabled={isExportingShifts}
-                          className="w-full flex items-center justify-center gap-1.5 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-600/50 text-white text-xs font-bold rounded shadow transition-all cursor-pointer"
-                        >
-                          {isExportingShifts ? (
-                            <>
+                        <div className="grid grid-cols-2 gap-1.5">
+                          <button
+                            onClick={() => handleExportShiftsPDFHandler("download")}
+                            disabled={isExportingShifts}
+                            className="flex items-center justify-center gap-1.5 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-600/50 text-white text-xs font-bold rounded shadow transition-all cursor-pointer"
+                          >
+                            {isExportingShifts ? (
                               <RefreshCw className="size-3.5 animate-spin" />
-                              <span>Exporting...</span>
-                            </>
-                          ) : (
-                            <>
+                            ) : (
                               <Download className="size-3.5" />
-                              <span>Download Shift Reports ({closingReports.length})</span>
-                            </>
-                          )}
-                        </button>
+                            )}
+                            <span>PDF ({closingReports.length})</span>
+                          </button>
+                          <button
+                            onClick={handleExportShiftsCSV}
+                            disabled={isExportingShifts}
+                            className="flex items-center justify-center gap-1 py-2 bg-slate-800 hover:bg-slate-700 disabled:bg-slate-800/50 text-white text-xs font-bold rounded transition-all cursor-pointer"
+                          >
+                            <FileSpreadsheet className="size-3.5" />
+                            <span>CSV Data</span>
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -8902,11 +8966,19 @@ const handleResetPassword = async (e: React.FormEvent) => {
                 </button>
                 <button
                   type="button"
-                  onClick={() => window.print()}
+                  onClick={() => exportShiftsPDF([selectedReportForPrint], branches, "download")}
+                  className="px-4 py-2.5 text-xs font-extrabold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-md shadow-blue-600/20 transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  <Download className="size-4" />
+                  <span>Download PDF</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => exportShiftsPDF([selectedReportForPrint], branches, "print")}
                   className="px-5 py-2.5 text-xs font-extrabold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-md shadow-emerald-600/20 transition-all cursor-pointer flex items-center gap-2"
                 >
                   <Printer className="size-4" />
-                  <span>🖨️ Print Day's Shift Report</span>
+                  <span>Print PDF Audit</span>
                 </button>
               </div>
             </motion.div>

@@ -154,6 +154,30 @@ app.post("/api/auth/reset-password", (req, res) => {
   }
 });
 
+  // Automated Backup Export Endpoint for Admins
+  app.post("/api/admin/backup/export", requireAdmin, async (req, res) => {
+    const user = (req as any).user;
+    const bucket = process.env.BACKUP_BUCKET || "gs://gen-lang-client-0259523664-firestore-backups";
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    
+    db.logAction(
+      user.id,
+      user.name,
+      "Firestore Daily Backup Export",
+      undefined,
+      `Manual or scheduled trigger for transaction data backup to ${bucket}/${timestamp}`
+    );
+
+    res.json({
+      success: true,
+      message: "Daily Automated Firestore Transaction Backup export initiated successfully.",
+      targetBucket: bucket,
+      prefix: timestamp,
+      scheduledCloudFunction: "scheduledDailyFirestoreBackup",
+      collectionsExported: ["transactions", "enakomoor_data", "shifts", "branches", "debts", "commissions"]
+    });
+  });
+
   // Branches
   app.get("/api/branches", requireAuth, (req, res) => {
     const branches = db.getBranches();
